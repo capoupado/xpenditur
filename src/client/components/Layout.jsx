@@ -7,6 +7,7 @@ const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: '📊', end: true },
   { to: '/transactions', label: 'Transactions', icon: '💸' },
   { to: '/categories', label: 'Categories', icon: '🏷️' },
+  { to: '/budgets', label: 'Budgets', icon: '🎯' },
 ];
 
 function NavLinks({ onClick }) {

@@ -7,6 +7,7 @@ import CategoryDonutChart from '../components/Charts/CategoryDonutChart.jsx';
 import TrendBarChart from '../components/Charts/TrendBarChart.jsx';
 import DailySpendingLineChart from '../components/Charts/DailySpendingLineChart.jsx';
 import CategoryBreakdownTable from '../components/Charts/CategoryBreakdownTable.jsx';
+import BudgetProgress from '../components/BudgetProgress.jsx';
 
 function SummaryCard({ label, value, tone }) {
   const toneClasses = {
@@ -28,6 +29,7 @@ export default function Dashboard() {
   const [monthly, setMonthly] = useState(null);
   const [categoryStats, setCategoryStats] = useState(null);
   const [trends, setTrends] = useState(null);
+  const [budgetStatus, setBudgetStatus] = useState(null);
   const [loading, setLoading] = useState(true);
 
   // First load: ask the server what "this month" is (TZ-aware), then use it
@@ -49,11 +51,13 @@ export default function Dashboard() {
       api.get(`/stats/monthly?month=${month}`),
       api.get(`/stats/categories?month=${month}`),
       api.get('/stats/trends?months=6'),
+      api.get(`/budgets/status?month=${month}`),
     ])
-      .then(([monthlyRes, categoriesRes, trendsRes]) => {
+      .then(([monthlyRes, categoriesRes, trendsRes, budgetStatusRes]) => {
         setMonthly(monthlyRes);
         setCategoryStats(categoriesRes);
         setTrends(trendsRes);
+        setBudgetStatus(budgetStatusRes);
       })
       .catch((err) => toast.error(err.message))
       .finally(() => setLoading(false));
@@ -89,6 +93,17 @@ export default function Dashboard() {
           </div>
 
           <TrendBarChart months={trends?.months} />
+
+          {budgetStatus?.budgets?.length > 0 && (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+              <h2 className="font-semibold text-gray-200 mb-4">Budgets this month</h2>
+              <div className="space-y-4">
+                {budgetStatus.budgets.map((status) => (
+                  <BudgetProgress key={status.category_id} status={status} />
+                ))}
+              </div>
+            </div>
+          )}
 
           <CategoryBreakdownTable categories={categoryStats?.categories} />
         </div>

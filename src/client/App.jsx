@@ -7,6 +7,7 @@ import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Transactions from './pages/Transactions.jsx';
 import Categories from './pages/Categories.jsx';
+import Budgets from './pages/Budgets.jsx';
 
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
@@ -30,6 +31,7 @@ function AppRoutes() {
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/transactions" element={<Transactions />} />
                 <Route path="/categories" element={<Categories />} />
+                <Route path="/budgets" element={<Budgets />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </Layout>
