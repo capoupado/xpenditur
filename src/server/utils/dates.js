@@ -84,3 +84,39 @@ export function allDatesInMonth(monthStr) {
   }
   return dates;
 }
+
+/**
+ * Adds `n` days (can be negative) to a YYYY-MM-DD date string.
+ * Pure calendar arithmetic anchored at UTC midnight, so DST in the app
+ * timezone can never shift the result off the intended calendar day.
+ */
+export function addDays(dateStr, n) {
+  const [year, month, day] = dateStr.slice(0, 10).split('-').map(Number);
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  dt.setUTCDate(dt.getUTCDate() + n);
+  return dt.toISOString().slice(0, 10);
+}
+
+/**
+ * Number of whole calendar days from `fromStr` to `toStr` (positive if to > from).
+ * Pure calendar arithmetic (UTC-anchored), independent of timezone/DST.
+ */
+export function daysBetween(fromStr, toStr) {
+  const [fy, fm, fd] = fromStr.slice(0, 10).split('-').map(Number);
+  const [ty, tm, td] = toStr.slice(0, 10).split('-').map(Number);
+  const from = Date.UTC(fy, fm - 1, fd);
+  const to = Date.UTC(ty, tm - 1, td);
+  return Math.round((to - from) / 86400000);
+}
+
+/**
+ * Builds a YYYY-MM-DD date from a YYYY-MM month string and a day-of-month,
+ * clamping the day to the month's last day (e.g. day 31 in 2026-02 → 2026-02-28).
+ * This is the "clamp doesn't stick" primitive: the caller always passes the
+ * template's original anchor day, never a previously-clamped value.
+ */
+export function clampDayToMonth(monthStr, day) {
+  const lastDay = daysInMonthCount(monthStr);
+  const clamped = Math.min(day, lastDay);
+  return `${monthStr}-${String(clamped).padStart(2, '0')}`;
+}

@@ -164,7 +164,18 @@ export default function Transactions() {
                 {transactions.map((tx) => (
                   <tr key={tx.id} className="border-t border-gray-800">
                     <td className="px-4 py-2 whitespace-nowrap">{formatDate(tx.date)}</td>
-                    <td className="px-4 py-2 text-gray-300">{tx.description || '—'}</td>
+                    <td className="px-4 py-2 text-gray-300">
+                      {tx.recurring_id != null && (
+                        <span
+                          className="mr-1.5 text-emerald-400"
+                          title="Created from a recurring transaction"
+                          aria-label="Recurring"
+                        >
+                          🔁
+                        </span>
+                      )}
+                      {tx.description || '—'}
+                    </td>
                     <td className="px-4 py-2 text-gray-400">
                       {tx.category_icon} {tx.category_name}
                     </td>

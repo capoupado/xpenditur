@@ -8,6 +8,7 @@ const NAV_ITEMS = [
   { to: '/transactions', label: 'Transactions', icon: '💸' },
   { to: '/categories', label: 'Categories', icon: '🏷️' },
   { to: '/budgets', label: 'Budgets', icon: '🎯' },
+  { to: '/recurring', label: 'Recurring', icon: '🔁' },
 ];
 
 function NavLinks({ onClick }) {

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { api } from '../lib/api.js';
-import { formatCents } from '../lib/format.js';
+import { formatCents, formatDate, describeFrequency } from '../lib/format.js';
 import MonthPicker from '../components/MonthPicker.jsx';
 import CategoryDonutChart from '../components/Charts/CategoryDonutChart.jsx';
 import TrendBarChart from '../components/Charts/TrendBarChart.jsx';
@@ -30,7 +30,17 @@ export default function Dashboard() {
   const [categoryStats, setCategoryStats] = useState(null);
   const [trends, setTrends] = useState(null);
   const [budgetStatus, setBudgetStatus] = useState(null);
+  const [upcoming, setUpcoming] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // Upcoming recurring transactions in the next 7 days — template-based (reads
+  // next_due), independent of the selected month, so load it once on mount.
+  useEffect(() => {
+    api
+      .get('/recurring/upcoming?days=7')
+      .then((res) => setUpcoming(res.upcoming))
+      .catch((err) => toast.error(err.message));
+  }, []);
 
   // First load: ask the server what "this month" is (TZ-aware), then use it
   // both as the initial selection and as the ceiling for month navigation.
@@ -86,6 +96,40 @@ export default function Dashboard() {
               tone={monthly.balance >= 0 ? 'positive' : 'negative'}
             />
           </div>
+
+          {upcoming?.length > 0 && (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <h2 className="font-semibold text-gray-200">Upcoming recurring</h2>
+                <span className="text-xs bg-emerald-600/20 text-emerald-400 rounded-full px-2 py-0.5">
+                  {upcoming.length} in next 7 days
+                </span>
+              </div>
+              <ul className="divide-y divide-gray-800">
+                {upcoming.map((rec) => (
+                  <li key={rec.id} className="flex items-center justify-between py-2 text-sm">
+                    <div className="min-w-0">
+                      <span className="text-gray-200">
+                        {rec.category_icon} {rec.category_name || '—'}
+                      </span>
+                      <span className="text-gray-500">
+                        {' '}
+                        · {describeFrequency(rec)} · due {formatDate(rec.next_due)}
+                      </span>
+                    </div>
+                    <span
+                      className={`font-medium whitespace-nowrap ${
+                        rec.type === 'earning' ? 'text-emerald-400' : 'text-red-400'
+                      }`}
+                    >
+                      {rec.type === 'earning' ? '+' : '-'}
+                      {formatCents(rec.amount)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <CategoryDonutChart categories={categoryStats?.categories} />

@@ -33,6 +33,8 @@ A template that automatically materialises Transactions on a schedule (daily / w
 
 **Backfill rule:** when processing runs after missed due dates (e.g. server downtime), every missed occurrence is materialised, each dated its actual due date — no occurrence is ever silently skipped. There is no backfill cap.
 
+**Pause rule:** deactivating a template means its occurrences during the pause *never happened* — unlike downtime, a pause is deliberate. On reactivation, materialisation resumes from the next future occurrence with no catch-up.
+
 **Immutable history:** template edits affect only future materialisation; deleting a template stops future occurrences and severs (nulls) the provenance link on past Transactions, which survive untouched. Correcting a wrongly-materialised Transaction means editing that Transaction directly. `day_of_month` beyond a short month's end clamps to the month's last day.
 
 ### Budget Alert
