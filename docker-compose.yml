@@ -1,0 +1,10 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data    # SQLite file lives here
+    env_file:
+      - .env
+    restart: unless-stopped
