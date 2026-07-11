@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { to: '/categories', label: 'Categories', icon: '🏷️' },
   { to: '/budgets', label: 'Budgets', icon: '🎯' },
   { to: '/recurring', label: 'Recurring', icon: '🔁' },
+  { to: '/settings', label: 'Settings', icon: '⚙️' },
 ];
 
 function NavLinks({ onClick }) {

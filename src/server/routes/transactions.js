@@ -2,6 +2,7 @@ import express from 'express';
 import db from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { isValidDateString, isFutureDate } from '../utils/dates.js';
+import { withBudgetAlertCheck } from '../services/notifications.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -106,11 +107,14 @@ router.post('/', (req, res) => {
   const typeError = checkCategoryTypeMatch(category_id, type);
   if (typeError) return res.status(400).json({ error: typeError });
 
-  const info = db
-    .prepare(
-      'INSERT INTO transactions (type, amount, description, category_id, date) VALUES (?, ?, ?, ?, ?)'
-    )
-    .run(type, amount, description, category_id, date);
+  const month = date.slice(0, 7);
+  const info = withBudgetAlertCheck(category_id, month, type, () =>
+    db
+      .prepare(
+        'INSERT INTO transactions (type, amount, description, category_id, date) VALUES (?, ?, ?, ?, ?)'
+      )
+      .run(type, amount, description, category_id, date)
+  );
 
   const transaction = db.prepare('SELECT * FROM transactions WHERE id = ?').get(info.lastInsertRowid);
   res.status(201).json(transaction);
@@ -133,9 +137,18 @@ router.put('/:id', (req, res) => {
   const typeError = checkCategoryTypeMatch(category_id, type);
   if (typeError) return res.status(400).json({ error: typeError });
 
-  db.prepare(
-    'UPDATE transactions SET type = ?, amount = ?, description = ?, category_id = ?, date = ? WHERE id = ?'
-  ).run(type, amount, description, category_id, date, id);
+  // Budget alerts evaluate the category+month the transaction LANDS IN (the
+  // new state) — before/after are captured around the write itself, so an
+  // edit that moves category/month is handled correctly (see
+  // services/notifications.js → withBudgetAlertCheck).
+  const month = date.slice(0, 7);
+  withBudgetAlertCheck(category_id, month, type, () =>
+    db
+      .prepare(
+        'UPDATE transactions SET type = ?, amount = ?, description = ?, category_id = ?, date = ? WHERE id = ?'
+      )
+      .run(type, amount, description, category_id, date, id)
+  );
 
   const updated = db.prepare('SELECT * FROM transactions WHERE id = ?').get(id);
   res.json(updated);
