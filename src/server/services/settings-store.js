@@ -32,6 +32,30 @@ function validateWeekday(value) {
   return Number.isInteger(n) && n >= 0 && n <= 6;
 }
 
+// Phase 6 validators. Empty string is always accepted (it clears the value /
+// keeps a secret unset); non-empty values are checked for shape.
+function validatePort(value) {
+  if (value === '') return true;
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 1 && n <= 65535;
+}
+
+function validateBoolish(value) {
+  return value === '' || value === 'true' || value === 'false';
+}
+
+function validatePollInterval(value) {
+  if (value === '') return true;
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 1 && n <= 1440; // 1 min .. 1 day
+}
+
+// Free-form settings (host, username, allow-list, secrets, internal cursors)
+// accept any string — presence/absence is the only thing that matters.
+function validateAnyString(value) {
+  return typeof value === 'string';
+}
+
 // Masks a secret-ish value, showing only its last `visible` characters.
 export function maskValue(value, visible = 8) {
   if (!value) return '';
@@ -66,9 +90,74 @@ export const SETTINGS_REGISTRY = {
     encrypt: false,
     default: '1',
   },
-  // Phase 6 placeholders (documented in plan.md's settings table). Left
-  // unregistered-for-real until Phase 6 implements IMAP/DeepSeek — listing
-  // them here would expose 501-ish half-features in the Settings UI today.
+  // ---- Phase 6 — Email invoice auto-tracking (IMAP + DeepSeek) ----
+  imap_host: {
+    validate: validateAnyString,
+    validateMessage: 'must be a string',
+    mask: false,
+    encrypt: false,
+    default: '',
+  },
+  imap_port: {
+    validate: validatePort,
+    validateMessage: 'must be an integer 1-65535 (typically 993 for IMAPS)',
+    mask: false,
+    encrypt: false,
+    default: '993',
+  },
+  imap_user: {
+    validate: validateAnyString,
+    validateMessage: 'must be a string',
+    mask: false,
+    encrypt: false,
+    default: '',
+  },
+  imap_password: {
+    validate: validateAnyString,
+    validateMessage: 'must be a string',
+    mask: true,
+    encrypt: true,
+    default: '',
+  },
+  imap_tls: {
+    validate: validateBoolish,
+    validateMessage: "must be 'true' or 'false'",
+    mask: false,
+    encrypt: false,
+    default: 'true',
+  },
+  imap_poll_interval_minutes: {
+    validate: validatePollInterval,
+    validateMessage: 'must be an integer number of minutes between 1 and 1440',
+    mask: false,
+    encrypt: false,
+    default: '15',
+  },
+  imap_sender_allowlist: {
+    validate: validateAnyString,
+    validateMessage: 'must be a string (comma/newline separated addresses, or empty)',
+    mask: false,
+    encrypt: false,
+    default: '',
+  },
+  deepseek_api_key: {
+    validate: validateAnyString,
+    validateMessage: 'must be a string',
+    mask: true,
+    encrypt: true,
+    default: '',
+  },
+  // Internal cursor: ISO timestamp of the last successful IMAP poll. Not a
+  // user-facing setting (the Settings UI ignores it), but stored here so the
+  // poller's date-window survives restarts. Registered so it goes through the
+  // same get/setSetting plumbing.
+  imap_last_poll: {
+    validate: validateAnyString,
+    validateMessage: 'must be a string',
+    mask: false,
+    encrypt: false,
+    default: '',
+  },
 };
 
 function encrypt(plain) {
@@ -156,6 +245,29 @@ export function getAllSettingsForDisplay() {
   return out;
 }
 
+/**
+ * Boot-time sanity check for encrypted secrets. If ENCRYPTION_KEY changed
+ * since a secret was stored, decryption fails; rather than surfacing an opaque
+ * crypto error later, log one clear, actionable line per affected key. The
+ * secret is then treated as unset everywhere (getSetting already returns the
+ * fallback on decrypt failure). Safe to call once on startup.
+ */
+export function checkEncryptedSettingsDecryptable() {
+  for (const [key, meta] of Object.entries(SETTINGS_REGISTRY)) {
+    if (!meta.encrypt) continue;
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+    if (!row || !row.value) continue;
+    try {
+      decrypt(row.value);
+    } catch {
+      console.error(
+        `[settings] "${key}" could not be decrypted — ENCRYPTION_KEY changed. ` +
+          'Re-enter this credential in Settings. Treating it as unset for now.'
+      );
+    }
+  }
+}
+
 export default {
   SETTINGS_REGISTRY,
   getSetting,
@@ -163,4 +275,5 @@ export default {
   setSetting,
   getAllSettingsForDisplay,
   maskValue,
+  checkEncryptedSettingsDecryptable,
 };

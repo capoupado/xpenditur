@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useAuth } from '../lib/AuthContext.jsx';
+import { api } from '../lib/api.js';
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: '📊', end: true },
@@ -9,10 +10,11 @@ const NAV_ITEMS = [
   { to: '/categories', label: 'Categories', icon: '🏷️' },
   { to: '/budgets', label: 'Budgets', icon: '🎯' },
   { to: '/recurring', label: 'Recurring', icon: '🔁' },
+  { to: '/pending', label: 'Pending', icon: '📥', badgeKey: 'pending' },
   { to: '/settings', label: 'Settings', icon: '⚙️' },
 ];
 
-function NavLinks({ onClick }) {
+function NavLinks({ onClick, badges }) {
   return (
     <>
       {NAV_ITEMS.map((item) => (
@@ -31,6 +33,11 @@ function NavLinks({ onClick }) {
         >
           <span>{item.icon}</span>
           <span>{item.label}</span>
+          {item.badgeKey && badges[item.badgeKey] > 0 && (
+            <span className="ml-auto inline-flex items-center justify-center rounded-full bg-emerald-600 text-white text-xs font-semibold min-w-[1.25rem] h-5 px-1.5">
+              {badges[item.badgeKey]}
+            </span>
+          )}
         </NavLink>
       ))}
     </>
@@ -40,6 +47,25 @@ function NavLinks({ onClick }) {
 export default function Layout({ children }) {
   const { user, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [badges, setBadges] = useState({ pending: 0 });
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadCount = () =>
+      api
+        .get('/pending/count')
+        .then((res) => {
+          if (!cancelled) setBadges((b) => ({ ...b, pending: res.pending || 0 }));
+        })
+        .catch(() => {});
+    loadCount();
+    // Refresh periodically so the badge tracks background polling.
+    const t = setInterval(loadCount, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
 
   const handleLogout = async () => {
     try {
@@ -65,7 +91,7 @@ export default function Layout({ children }) {
       </div>
       {menuOpen && (
         <div className="md:hidden flex flex-col gap-1 px-3 pb-3 border-b border-gray-800">
-          <NavLinks onClick={() => setMenuOpen(false)} />
+          <NavLinks onClick={() => setMenuOpen(false)} badges={badges} />
         </div>
       )}
 
@@ -75,7 +101,7 @@ export default function Layout({ children }) {
           <span className="font-bold text-xl">xPenditur</span>
         </div>
         <nav className="flex flex-col gap-1 flex-1">
-          <NavLinks />
+          <NavLinks badges={badges} />
         </nav>
         <div className="px-4 pt-4 border-t border-gray-800">
           <p className="text-xs text-gray-500 mb-2">Signed in as {user?.username}</p>

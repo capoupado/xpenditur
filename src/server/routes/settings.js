@@ -2,6 +2,7 @@ import express from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { SETTINGS_REGISTRY, getAllSettingsForDisplay, setSetting } from '../services/settings-store.js';
 import { sendTestNotification } from '../services/notifications.js';
+import { testImapConnection } from '../services/imap.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -48,6 +49,23 @@ router.put('/', (req, res) => {
 // throw — sendTestNotification always resolves to { success, ... }.
 router.post('/test-discord', async (req, res) => {
   const result = await sendTestNotification();
+  res.status(result.success ? 200 : 400).json(result);
+});
+
+// POST /api/settings/test-imap — attempt connect + read-only INBOX open using
+// the stored settings, optionally overlaid with values from the request body
+// (so the user can test edits before saving). A blank/omitted password falls
+// back to the stored one — the UI never round-trips the real secret.
+router.post('/test-imap', async (req, res) => {
+  const body = req.body || {};
+  const overrides = {};
+  for (const key of ['host', 'user', 'tls']) {
+    if (body[key] !== undefined && body[key] !== '') overrides[key] = body[key];
+  }
+  if (body.port !== undefined && body.port !== '') overrides.port = body.port;
+  if (body.password !== undefined && body.password !== '') overrides.password = body.password;
+
+  const result = await testImapConnection(overrides);
   res.status(result.success ? 200 : 400).json(result);
 });
 

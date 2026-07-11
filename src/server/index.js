@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 
 import { initDb } from './db.js';
 import { registerCronJobs } from './cron.js';
+import { checkEncryptedSettingsDecryptable } from './services/settings-store.js';
 
 import authRoutes from './routes/auth.js';
 import categoriesRoutes from './routes/categories.js';
@@ -25,6 +26,10 @@ if (!process.env.JWT_SECRET) {
 }
 
 initDb();
+
+// Surface a clear message (not an opaque crypto error) if ENCRYPTION_KEY
+// changed and stored IMAP/DeepSeek secrets can no longer be decrypted.
+checkEncryptedSettingsDecryptable();
 
 const app = express();
 app.disable('x-powered-by');

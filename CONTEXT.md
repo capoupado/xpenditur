@@ -47,7 +47,9 @@ The extractor decides whether the email describes an Earning or a Spending (defa
 
 **Always approvable by construction:** gaps are filled at extraction time — an unmatched or missing category suggestion becomes "Other", a missing date becomes the email's received date. Plain Approve (and bulk approve) therefore never fails; Edit & Approve exists to disagree with the AI, not to repair it.
 
-**Sole exception — foreign currency:** the extractor also reports the currency. A non-EUR Pending Transaction is quarantined: plain Approve is blocked (and bulk approve skips it, reporting the skip); the user must supply the real EUR amount via Edit & Approve. The app never converts currency itself.
+**Exception — future date:** a Pending Transaction whose extracted date is in the future cannot be plain-approved (the ledger's no-future-dates rule wins); the user supplies a valid date via Edit & Approve.
+
+**Exception — foreign currency:** the extractor also reports the currency. A non-EUR Pending Transaction is quarantined: plain Approve is blocked (and bulk approve skips it, reporting the skip); the user must supply the real EUR amount via Edit & Approve. The app never converts currency itself.
 
 **Read-only mailbox:** the poller never alters the mailbox (no read-marking, no flags). It searches by date window and deduplicates via its own processed-email record keyed on Message-ID.
 

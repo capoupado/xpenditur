@@ -36,6 +36,20 @@ export default function Settings() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
 
+  // Phase 6 — Email invoice auto-tracking
+  const [imapHost, setImapHost] = useState('');
+  const [imapPort, setImapPort] = useState('993');
+  const [imapUser, setImapUser] = useState('');
+  const [imapPassword, setImapPassword] = useState('');
+  const [imapPasswordMasked, setImapPasswordMasked] = useState('');
+  const [imapTls, setImapTls] = useState('true');
+  const [pollInterval, setPollInterval] = useState('15');
+  const [allowlist, setAllowlist] = useState('');
+  const [deepseekKey, setDeepseekKey] = useState('');
+  const [deepseekMasked, setDeepseekMasked] = useState('');
+  const [savingEmail, setSavingEmail] = useState(false);
+  const [testingImap, setTestingImap] = useState(false);
+
   const load = () => {
     setLoading(true);
     return api
@@ -44,6 +58,14 @@ export default function Settings() {
         setWebhookMasked(data.discord_webhook_url || '');
         setThreshold(String(data.notification_budget_threshold ?? '80'));
         setWeeklyDay(String(data.weekly_summary_day ?? '1'));
+        setImapHost(data.imap_host || '');
+        setImapPort(String(data.imap_port ?? '993'));
+        setImapUser(data.imap_user || '');
+        setImapPasswordMasked(data.imap_password || '');
+        setImapTls(String(data.imap_tls ?? 'true'));
+        setPollInterval(String(data.imap_poll_interval_minutes ?? '15'));
+        setAllowlist(data.imap_sender_allowlist || '');
+        setDeepseekMasked(data.deepseek_api_key || '');
       })
       .catch((err) => toast.error(err.message))
       .finally(() => setLoading(false));
@@ -105,6 +127,55 @@ export default function Settings() {
       toast.error(err.message);
     } finally {
       setTesting(false);
+    }
+  };
+
+  const handleSaveEmail = async (e) => {
+    e.preventDefault();
+    setSavingEmail(true);
+    try {
+      const payload = {
+        imap_host: imapHost.trim(),
+        imap_port: imapPort,
+        imap_user: imapUser.trim(),
+        imap_tls: imapTls,
+        imap_poll_interval_minutes: pollInterval,
+        imap_sender_allowlist: allowlist,
+      };
+      // Only send secrets if the user typed a new one (else we'd overwrite the
+      // stored value with its masked preview).
+      if (imapPassword.trim() !== '') payload.imap_password = imapPassword.trim();
+      if (deepseekKey.trim() !== '') payload.deepseek_api_key = deepseekKey.trim();
+      await api.put('/settings', payload);
+      toast.success('Email settings saved');
+      setImapPassword('');
+      setDeepseekKey('');
+      await load();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setSavingEmail(false);
+    }
+  };
+
+  const handleTestImap = async () => {
+    setTestingImap(true);
+    try {
+      const body = { host: imapHost.trim(), port: imapPort, user: imapUser.trim(), tls: imapTls };
+      if (imapPassword.trim() !== '') body.password = imapPassword.trim();
+      const res = await fetch('/api/settings/test-imap', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) toast.success('IMAP connection OK');
+      else toast.error(data.error || 'IMAP connection failed');
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setTestingImap(false);
     }
   };
 
@@ -213,6 +284,129 @@ export default function Settings() {
               className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
             >
               {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </form>
+      </SectionCard>
+
+      <SectionCard
+        title="Email invoice auto-tracking"
+        description="Poll a read-only IMAP mailbox for invoices/receipts and extract them with DeepSeek into Pending transactions. The mailbox is never modified."
+      >
+        <form onSubmit={handleSaveEmail} className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">IMAP host</label>
+              <input
+                type="text"
+                value={imapHost}
+                onChange={(e) => setImapHost(e.target.value)}
+                placeholder="imap.example.com"
+                className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Port</label>
+              <input
+                type="number"
+                value={imapPort}
+                onChange={(e) => setImapPort(e.target.value)}
+                className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Username</label>
+              <input
+                type="text"
+                value={imapUser}
+                onChange={(e) => setImapUser(e.target.value)}
+                className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Password</label>
+              <input
+                type="password"
+                value={imapPassword}
+                onChange={(e) => setImapPassword(e.target.value)}
+                placeholder={imapPasswordMasked || 'Mailbox password / app password'}
+                className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                {imapPasswordMasked ? `Currently set: ${imapPasswordMasked}` : 'Not configured.'} Leave blank to keep it.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">TLS</label>
+              <select
+                value={imapTls}
+                onChange={(e) => setImapTls(e.target.value)}
+                className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="true">On (implicit TLS)</option>
+                <option value="false">Off</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Poll interval (minutes)</label>
+              <input
+                type="number"
+                min="1"
+                max="1440"
+                value={pollInterval}
+                onChange={(e) => setPollInterval(e.target.value)}
+                className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Sender allow-list (optional)</label>
+            <textarea
+              rows={2}
+              value={allowlist}
+              onChange={(e) => setAllowlist(e.target.value)}
+              placeholder="billing@shop.com, noreply@utility.com — leave blank to accept any sender"
+              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+            <p className="text-xs text-gray-500 mt-1">Comma or newline separated. Empty means no sender filter.</p>
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">DeepSeek API key</label>
+            <input
+              type="password"
+              value={deepseekKey}
+              onChange={(e) => setDeepseekKey(e.target.value)}
+              placeholder={deepseekMasked || 'sk-...'}
+              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              {deepseekMasked ? `Currently set: ${deepseekMasked}` : 'Not configured.'} Leave blank to keep it.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2 justify-end pt-2">
+            <button
+              type="button"
+              onClick={handleTestImap}
+              disabled={testingImap}
+              className="rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-sm font-medium px-4 py-2 transition-colors"
+            >
+              {testingImap ? 'Testing…' : 'Test IMAP connection'}
+            </button>
+            <button
+              type="submit"
+              disabled={savingEmail}
+              className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
+            >
+              {savingEmail ? 'Saving…' : 'Save'}
             </button>
           </div>
         </form>
