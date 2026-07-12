@@ -20,7 +20,7 @@ import db from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { isValidDateString, isFutureDate } from '../utils/dates.js';
 import { checkBudgetAlertForTransaction } from '../services/notifications.js';
-import { pollInbox } from '../services/imap.js';
+import { pollAllInboxes } from '../services/imap.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -113,9 +113,10 @@ router.get('/', (req, res) => {
   const rows = db
     .prepare(
       `SELECT p.*, c.name AS suggested_category_name, c.icon AS suggested_category_icon,
-              c.color AS suggested_category_color
+              c.color AS suggested_category_color, a.label AS account_label
        FROM pending_transactions p
        JOIN categories c ON c.id = p.suggested_category_id
+       LEFT JOIN imap_accounts a ON a.id = p.account_id
        ${where}
        ORDER BY p.created_at DESC, p.id DESC`
     )
@@ -290,11 +291,35 @@ router.post('/bulk', (req, res) => {
 
 router.post('/poll-now', async (req, res) => {
   try {
-    const counts = await pollInbox();
+    const counts = await pollAllInboxes();
     res.json(counts);
   } catch (err) {
-    // pollInbox is designed never to throw, but stay defensive.
+    // pollAllInboxes is designed never to throw, but stay defensive.
     console.error('[pending] poll-now failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/pending/poll-range — manual backfill poll over an explicit
+// fromDate..toDate window (inclusive). Never runs on a schedule and never
+// advances the incremental last_poll cursor; processed_emails dedup makes
+// re-polling an already-covered window harmless.
+// ---------------------------------------------------------------------------
+
+router.post('/poll-range', async (req, res) => {
+  const { fromDate, toDate } = req.body || {};
+  if (!isValidDateString(fromDate) || !isValidDateString(toDate)) {
+    return res.status(400).json({ error: 'fromDate and toDate must be valid YYYY-MM-DD dates' });
+  }
+  if (fromDate > toDate) {
+    return res.status(400).json({ error: 'fromDate must not be after toDate' });
+  }
+  try {
+    const counts = await pollAllInboxes({ fromDate, toDate });
+    res.json(counts);
+  } catch (err) {
+    console.error('[pending] poll-range failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

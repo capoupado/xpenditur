@@ -16,7 +16,7 @@
 //     the second run finds next_due > today and does nothing.
 
 import db from '../db.js';
-import { todayLocalDate, addDays, clampDayToMonth, daysBetween } from '../utils/dates.js';
+import { todayLocalDate, addDays, clampDayToMonth, daysBetween, nthWeekdayOfMonth } from '../utils/dates.js';
 import { onRecurringMaterialised } from './notifications.js';
 
 // How many days behind "today" a template may be before we log a catch-up warning.
@@ -39,6 +39,11 @@ export function advanceDueDate(currentDue, template) {
     case 'weekly':
       return addDays(currentDue, 7);
     case 'monthly':
+      // Weekday mode: "Nth/last <weekday> of the month" (week_of_month 1-4 or
+      // -1 = last) instead of a fixed day_of_month.
+      if (template.week_of_month != null) {
+        return nthWeekdayOfMonth(shift(ym, 1), template.day_of_week, template.week_of_month);
+      }
       return clampDayToMonth(shift(ym, 1), template.day_of_month);
     case 'yearly':
       // Anchor day is stored in day_of_month at creation time (derived from the
@@ -48,6 +53,18 @@ export function advanceDueDate(currentDue, template) {
     default:
       throw new Error(`Unknown frequency: ${template.frequency}`);
   }
+}
+
+/**
+ * First occurrence of an "Nth/last weekday of the month" rule on or after
+ * `fromDate` (YYYY-MM-DD). Used to derive next_due when a weekday-mode
+ * template is created/edited without an explicit date.
+ */
+export function firstWeekdayOccurrenceOnOrAfter(fromDate, dayOfWeek, weekOfMonth) {
+  const ym = fromDate.slice(0, 7);
+  const candidate = nthWeekdayOfMonth(ym, dayOfWeek, weekOfMonth);
+  if (candidate >= fromDate) return candidate;
+  return nthWeekdayOfMonth(shift(ym, 1), dayOfWeek, weekOfMonth);
 }
 
 // Shift a YYYY-MM string by `delta` months (local copy to avoid importing the
@@ -158,4 +175,4 @@ export function processDueRecurring() {
   return { processedTemplates: templates.length, created };
 }
 
-export default { processDueRecurring, advanceDueDate };
+export default { processDueRecurring, advanceDueDate, firstWeekdayOccurrenceOnOrAfter };

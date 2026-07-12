@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { api } from '../lib/api.js';
 import { formatCents, formatDate } from '../lib/format.js';
@@ -53,6 +53,12 @@ export default function Pending() {
   const [selected, setSelected] = useState(new Set());
   const [editing, setEditing] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [rangeOpen, setRangeOpen] = useState(false);
+  const [rangeFrom, setRangeFrom] = useState('');
+  const [rangeTo, setRangeTo] = useState('');
+  const [rangePolling, setRangePolling] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const fileInputRef = useRef(null);
 
   const loadCategories = () => api.get('/categories').then(setCategories);
 
@@ -93,6 +99,53 @@ export default function Pending() {
       toast.error(err.message);
     } finally {
       setPolling(false);
+    }
+  };
+
+  const pollRange = async (e) => {
+    e.preventDefault();
+    setRangePolling(true);
+    try {
+      const c = await api.post('/pending/poll-range', { fromDate: rangeFrom, toDate: rangeTo });
+      if (c.noop) {
+        toast('IMAP is not configured — nothing to poll.', { icon: 'ℹ️' });
+      } else if (c.error) {
+        toast.error(`Poll failed: ${c.error}`);
+      } else {
+        toast.success(
+          `Examined ${c.examined}, matched ${c.matched}, extracted ${c.extracted}, duplicates ${c.skippedDuplicates}`
+        );
+      }
+      setRangeOpen(false);
+      await load();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setRangePolling(false);
+    }
+  };
+
+  const importFile = async (file) => {
+    setImporting(true);
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let binary = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      }
+      const res = await api.post('/import/statement', {
+        filename: file.name,
+        contentBase64: btoa(binary),
+      });
+      toast.success(
+        `Parsed ${res.parsed} row${res.parsed === 1 ? '' : 's'} — imported ${res.inserted}, duplicates ${res.skippedDuplicates}, skipped ${res.skippedRows}`
+      );
+      await load();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -175,13 +228,41 @@ export default function Pending() {
             AI-extracted invoices awaiting your ruling. Approving creates a real transaction.
           </p>
         </div>
-        <button
-          onClick={pollNow}
-          disabled={polling}
-          className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
-        >
-          {polling ? 'Polling…' : '⟳ Poll now'}
-        </button>
+        <div className="flex gap-2 flex-wrap">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,.txt,.pdf"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files && e.target.files[0];
+              if (file) importFile(file);
+            }}
+          />
+          <button
+            onClick={() => fileInputRef.current && fileInputRef.current.click()}
+            disabled={importing}
+            title="Import a bank statement export (CSV or PDF) — e.g. CGD or Novo Banco"
+            className="rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-sm font-medium px-4 py-2 transition-colors"
+          >
+            {importing ? 'Importing…' : '⇪ Import file'}
+          </button>
+          <button
+            onClick={() => setRangeOpen(true)}
+            disabled={rangePolling}
+            title="Poll mailboxes over an explicit date range (e.g. to backfill older months)"
+            className="rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-sm font-medium px-4 py-2 transition-colors"
+          >
+            Poll range…
+          </button>
+          <button
+            onClick={pollNow}
+            disabled={polling}
+            className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
+          >
+            {polling ? 'Polling…' : '⟳ Poll now'}
+          </button>
+        </div>
       </div>
 
       <div className="flex gap-1 mb-4 border-b border-gray-800">
@@ -237,6 +318,7 @@ export default function Pending() {
                 <th className="text-left px-4 py-2 font-medium">Date</th>
                 <th className="text-left px-4 py-2 font-medium">Suggested category</th>
                 <th className="text-left px-4 py-2 font-medium">Confidence</th>
+                <th className="text-left px-4 py-2 font-medium">Mailbox</th>
                 <th className="text-left px-4 py-2 font-medium">Email subject</th>
                 {isPendingTab && <th className="text-right px-4 py-2 font-medium">Actions</th>}
               </tr>
@@ -267,6 +349,14 @@ export default function Pending() {
                     </td>
                     <td className="px-4 py-2">
                       <ConfidenceDot value={row.confidence} />
+                    </td>
+                    <td className="px-4 py-2 text-gray-400 whitespace-nowrap max-w-[10rem] truncate" title={row.account_label || ''}>
+                      {row.account_label ||
+                        (row.source_email_from === 'file-import'
+                          ? '📄 File'
+                          : row.source_email_from === 'bank-sync'
+                            ? '🏦 Bank'
+                            : '—')}
                     </td>
                     <td className="px-4 py-2 text-gray-500 max-w-[16rem] truncate" title={row.source_email_subject || ''}>
                       {row.source_email_subject || '—'}
@@ -302,6 +392,60 @@ export default function Pending() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {rangeOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center px-4 z-50">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 max-w-sm w-full">
+            <h2 className="font-semibold text-lg mb-1">Poll a date range</h2>
+            <p className="text-xs text-gray-500 mb-4">
+              Searches every active mailbox for invoices received in this window (inclusive) — use it to backfill
+              months the regular poll never covered. Already-processed emails are skipped automatically.
+            </p>
+            <form onSubmit={pollRange} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">From</label>
+                  <input
+                    type="date"
+                    required
+                    value={rangeFrom}
+                    max={rangeTo || undefined}
+                    onChange={(e) => setRangeFrom(e.target.value)}
+                    className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">To</label>
+                  <input
+                    type="date"
+                    required
+                    value={rangeTo}
+                    min={rangeFrom || undefined}
+                    onChange={(e) => setRangeTo(e.target.value)}
+                    className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+              <div className="flex gap-2 justify-end">
+                <button
+                  type="button"
+                  onClick={() => setRangeOpen(false)}
+                  className="rounded-lg bg-gray-800 hover:bg-gray-700 text-sm font-medium px-4 py-2 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={rangePolling}
+                  className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
+                >
+                  {rangePolling ? 'Polling…' : 'Poll range'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

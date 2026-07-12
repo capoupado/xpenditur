@@ -42,8 +42,14 @@ export function describeFrequency(rec) {
       const name = WEEKDAYS[rec.day_of_week] ?? '';
       return name ? `Weekly on ${name}` : 'Weekly';
     }
-    case 'monthly':
+    case 'monthly': {
+      if (rec.week_of_month != null) {
+        const name = WEEKDAYS[rec.day_of_week] ?? '';
+        const which = rec.week_of_month === -1 ? 'last' : ordinal(rec.week_of_month);
+        return `Monthly on the ${which} ${name}`;
+      }
       return rec.day_of_month ? `Monthly on the ${ordinal(rec.day_of_month)}` : 'Monthly';
+    }
     case 'yearly': {
       // Month/day are stable across years; read them from next_due.
       const [, mm, dd] = rec.next_due.slice(0, 10).split('-');

@@ -9,7 +9,9 @@
 - **Charts Dashboard** — spending by category, earnings vs. spending trends (last 6 months), daily breakdown, category tables
 - **Recurring Transactions** — daily/weekly/monthly/yearly with backfill on downtime (no missed occurrences)
 - **Discord Notifications** — threshold-crossing budget alerts (80% and 100%), weekly summaries (Monday), monthly recaps (1st of month)
-- **Email Invoice Extraction** — IMAP polling with DeepSeek AI parsing; human review queue for pending transactions (with EUR-amount enforcement on non-EUR invoices)
+- **Email Invoice Extraction** — IMAP polling with DeepSeek AI parsing; human review queue for pending transactions (with EUR-amount enforcement on non-EUR invoices); manual date-range backfill polling for older months
+- **Bank Statement Import** — upload CSV (parsed deterministically; CGD/Novo Banco export conventions supported) or PDF (parsed via DeepSeek) statements into the review queue
+- **Bank Sync (Enable Banking)** — pull transactions directly from your banks via the Enable Banking PSD2 aggregator; daily + on-demand sync into the review queue; the app serves its own `/privacy` and `/terms` pages required for an Enable Banking production application
 
 ## Quick Start
 
@@ -69,9 +71,24 @@ All settings beyond environment variables are managed in the **Settings UI** (ac
 - **Discord Webhook** — webhook URL for notifications (test button included)
 - **Budget Alert Threshold** — percentage at which alerts fire (default: 80%)
 - **Weekly Summary Day** — day of week for recurring summary (default: Monday)
-- **IMAP** — mailbox host, port, username, password; TLS toggle; poll interval; sender allow-list
+- **IMAP mailboxes** — any number of accounts, each with host, port, username, password, TLS toggle, per-mailbox sender allow-list, and an enable/disable switch; poll interval is global. Gmail and Zoho require an **app password** (their normal account password is rejected over IMAP) — the add-mailbox form shows provider-specific instructions
 - **DeepSeek API Key** — for invoice extraction
+- **Enable Banking** — application ID, RSA private key, and redirect URL for direct bank sync (see below)
 - Encrypted secrets use `ENCRYPTION_KEY`; changing it requires re-entering credentials.
+
+## Deploying to a VPS (and migrating existing data)
+
+The app is stateless apart from two things: the **`data/` directory** (SQLite database) and the **`.env` secrets**. Moving machines is a copy of both.
+
+1. **Stop the app on the old machine** (so the SQLite WAL is quiescent), then copy the entire `data/` directory (including any `-wal`/`-shm` files) to the VPS.
+2. **Copy `.env` values — `ENCRYPTION_KEY` must be byte-identical.** Every secret stored in the DB (IMAP passwords, DeepSeek key, Enable Banking private key) is encrypted with it; a different key makes them unrecoverable and you'd re-enter them in Settings. `JWT_SECRET` may change (it only logs you out). Review `TZ`, `PORT`, `NODE_ENV=production`.
+3. **Reverse proxy** — terminate TLS at Caddy/Nginx/Traefik for your domain and proxy to the app port. Set `TRUST_PROXY=true` so the app sees `https` and real client IPs (login rate limiting, bank-callback URL derivation).
+4. **Run it** — `docker compose up -d`, or `npm run build && npm start`.
+5. **Enable Banking (first setup or after moving)** — production applications require HTTPS URLs, which is why this lives on the VPS rather than localhost:
+   - The app serves `https://<your-domain>/privacy` and `https://<your-domain>/terms` — use these as the privacy/terms URLs when registering the application at enablebanking.com.
+   - Register `https://<your-domain>/api/bank/callback` as the application's redirect URL (and set it in Settings → Bank sync, or leave blank with `TRUST_PROXY=true` to derive it).
+   - Activate the production application in **restricted mode** ("Activate by linking accounts") and link every bank account you intend to sync — unlinked accounts are silently stripped from API responses.
+   - Bank connections/consents stored in the DB survive the move unchanged — they are tied to the Enable Banking application, not to the host.
 
 ## Domain Rules
 

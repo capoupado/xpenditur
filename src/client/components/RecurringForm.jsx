@@ -11,6 +11,14 @@ const WEEKDAYS = [
   { value: 6, label: 'Saturday' },
 ];
 
+const WEEK_OF_MONTH_OPTIONS = [
+  { value: 1, label: '1st' },
+  { value: 2, label: '2nd' },
+  { value: 3, label: '3rd' },
+  { value: 4, label: '4th' },
+  { value: -1, label: 'Last' },
+];
+
 // Controlled form for creating/editing a recurring template.
 // Unlike a transaction, next_due is a schedule and MAY be in the future/today.
 export default function RecurringForm({ initial, categories, onSubmit, onCancel, submitting }) {
@@ -21,11 +29,16 @@ export default function RecurringForm({ initial, categories, onSubmit, onCancel,
   const [description, setDescription] = useState(initial?.description || '');
   const [categoryId, setCategoryId] = useState(initial?.category_id || otherCategory?.id || '');
   const [frequency, setFrequency] = useState(initial?.frequency || 'monthly');
+  // Monthly has two sub-modes: a fixed day of the month, or "Nth/last weekday".
+  const [monthlyMode, setMonthlyMode] = useState(initial?.week_of_month != null ? 'weekday' : 'day');
   const [dayOfMonth, setDayOfMonth] = useState(
     initial?.day_of_month != null ? String(initial.day_of_month) : '1'
   );
   const [dayOfWeek, setDayOfWeek] = useState(
     initial?.day_of_week != null ? String(initial.day_of_week) : '1'
+  );
+  const [weekOfMonth, setWeekOfMonth] = useState(
+    initial?.week_of_month != null ? String(initial.week_of_month) : '-1'
   );
   const [nextDue, setNextDue] = useState(initial?.next_due || todayInputValue());
 
@@ -38,6 +51,8 @@ export default function RecurringForm({ initial, categories, onSubmit, onCancel,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type]);
 
+  const isMonthlyWeekday = frequency === 'monthly' && monthlyMode === 'weekday';
+
   const handleSubmit = (e) => {
     e.preventDefault();
     const cents = Math.round(parseFloat(amount) * 100);
@@ -47,9 +62,11 @@ export default function RecurringForm({ initial, categories, onSubmit, onCancel,
       description: description || null,
       category_id: Number(categoryId),
       frequency,
-      next_due: nextDue,
-      day_of_month: frequency === 'monthly' ? Number(dayOfMonth) : null,
-      day_of_week: frequency === 'weekly' ? Number(dayOfWeek) : null,
+      // Weekday mode derives its own next_due server-side from the rule.
+      next_due: isMonthlyWeekday ? null : nextDue,
+      day_of_month: frequency === 'monthly' && monthlyMode === 'day' ? Number(dayOfMonth) : null,
+      day_of_week: frequency === 'weekly' || isMonthlyWeekday ? Number(dayOfWeek) : null,
+      week_of_month: isMonthlyWeekday ? Number(weekOfMonth) : null,
     };
     onSubmit(payload);
   };
@@ -106,17 +123,11 @@ export default function RecurringForm({ initial, categories, onSubmit, onCancel,
 
         {frequency === 'monthly' && (
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Day of month (1–31)</label>
-            <input
-              required
-              type="number"
-              min="1"
-              max="31"
-              step="1"
-              value={dayOfMonth}
-              onChange={(e) => setDayOfMonth(e.target.value)}
-              className={inputCls}
-            />
+            <label className="block text-xs text-gray-500 mb-1">Repeat by</label>
+            <select value={monthlyMode} onChange={(e) => setMonthlyMode(e.target.value)} className={inputCls}>
+              <option value="day">Day of month</option>
+              <option value="weekday">Weekday (e.g. last Friday)</option>
+            </select>
           </div>
         )}
 
@@ -134,21 +145,68 @@ export default function RecurringForm({ initial, categories, onSubmit, onCancel,
         )}
       </div>
 
-      <div>
-        <label className="block text-xs text-gray-500 mb-1">Next due date</label>
-        <input
-          required
-          type="date"
-          value={nextDue}
-          onChange={(e) => setNextDue(e.target.value)}
-          className={inputCls}
-        />
-        {frequency === 'monthly' && (
-          <p className="text-xs text-gray-500 mt-1">
-            Days beyond a short month clamp to its last day (e.g. the 31st → Feb 28).
-          </p>
-        )}
-      </div>
+      {frequency === 'monthly' && monthlyMode === 'day' && (
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Day of month (1–31)</label>
+          <input
+            required
+            type="number"
+            min="1"
+            max="31"
+            step="1"
+            value={dayOfMonth}
+            onChange={(e) => setDayOfMonth(e.target.value)}
+            className={inputCls}
+          />
+        </div>
+      )}
+
+      {isMonthlyWeekday && (
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Which</label>
+            <select value={weekOfMonth} onChange={(e) => setWeekOfMonth(e.target.value)} className={inputCls}>
+              {WEEK_OF_MONTH_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Weekday</label>
+            <select value={dayOfWeek} onChange={(e) => setDayOfWeek(e.target.value)} className={inputCls}>
+              {WEEKDAYS.map((d) => (
+                <option key={d.value} value={d.value}>
+                  {d.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
+      {isMonthlyWeekday ? (
+        <p className="text-xs text-gray-500">
+          The next due date is computed automatically from the rule (first upcoming occurrence).
+        </p>
+      ) : (
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Next due date</label>
+          <input
+            required
+            type="date"
+            value={nextDue}
+            onChange={(e) => setNextDue(e.target.value)}
+            className={inputCls}
+          />
+          {frequency === 'monthly' && (
+            <p className="text-xs text-gray-500 mt-1">
+              Days beyond a short month clamp to its last day (e.g. the 31st → Feb 28).
+            </p>
+          )}
+        </div>
+      )}
 
       <div>
         <label className="block text-xs text-gray-500 mb-1">Description</label>

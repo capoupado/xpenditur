@@ -22,6 +22,595 @@ function SectionCard({ title, description, children }) {
   );
 }
 
+const inputCls =
+  'w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500';
+
+// Known providers: IMAP host/port suggestions + how to get an app password.
+// Gmail and Zoho both REJECT the normal account password over IMAP — an
+// app-specific password is required.
+const PROVIDERS = [
+  {
+    match: (u) => /@(gmail|googlemail)\./.test(u),
+    name: 'Gmail',
+    host: 'imap.gmail.com',
+    help: (
+      <>
+        Gmail does not accept your normal password over IMAP — you need an <strong>app password</strong>:
+        enable 2-Step Verification, then create one at{' '}
+        <a
+          href="https://myaccount.google.com/apppasswords"
+          target="_blank"
+          rel="noreferrer"
+          className="text-emerald-400 hover:underline"
+        >
+          myaccount.google.com/apppasswords
+        </a>{' '}
+        and paste the 16-character code here. Also make sure IMAP is enabled in Gmail → Settings → Forwarding
+        and POP/IMAP.
+      </>
+    ),
+  },
+  {
+    match: (u) => /@zoho/.test(u),
+    name: 'Zoho Mail',
+    host: 'imap.zoho.com',
+    help: (
+      <>
+        Zoho does not accept your normal password over IMAP — generate an <strong>app password</strong> under{' '}
+        <a
+          href="https://accounts.zoho.com/home#security"
+          target="_blank"
+          rel="noreferrer"
+          className="text-emerald-400 hover:underline"
+        >
+          Zoho Account → Security → App Passwords
+        </a>{' '}
+        and paste it here. Also enable IMAP access in Zoho Mail → Settings → Mail Accounts. EU-hosted
+        accounts use <code className="text-gray-400">imap.zoho.eu</code> instead.
+      </>
+    ),
+  },
+];
+
+function providerFor(username) {
+  const u = (username || '').toLowerCase();
+  return PROVIDERS.find((p) => p.match(u)) || null;
+}
+
+// Bank connections via Enable Banking (PSD2 aggregator). Self-contained:
+// loads its own status/connections, owns the credentials form and the
+// connect-a-bank flow (which navigates away to the bank and returns via
+// /api/bank/callback → /settings?bank=connected).
+function BankSyncSection() {
+  const [status, setStatus] = useState(null);
+  const [appId, setAppId] = useState('');
+  const [privateKey, setPrivateKey] = useState('');
+  const [redirectUrl, setRedirectUrl] = useState('');
+  const [privateKeyMasked, setPrivateKeyMasked] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [connections, setConnections] = useState([]);
+  const [banks, setBanks] = useState(null); // null = not loaded yet
+  const [country, setCountry] = useState('PT');
+  const [selectedBank, setSelectedBank] = useState('');
+  const [loadingBanks, setLoadingBanks] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+
+  const loadAll = () =>
+    Promise.all([
+      api.get('/settings').then((data) => {
+        setAppId(data.enablebanking_app_id || '');
+        setRedirectUrl(data.enablebanking_redirect_url || '');
+        setPrivateKeyMasked(data.enablebanking_private_key || '');
+      }),
+      api.get('/bank/connections').then(setConnections),
+      api.get('/bank/status').then(setStatus),
+    ]).catch((err) => toast.error(err.message));
+
+  useEffect(() => {
+    // Toast for the round-trip back from the bank, then clean the URL.
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('bank') === 'connected') {
+      toast.success(`Bank connected (${params.get('accounts') || '?'} account(s)) — press "Sync now" to fetch transactions.`);
+    } else if (params.get('bank') === 'error') {
+      toast.error(`Bank connection failed: ${params.get('message') || 'unknown error'}`);
+    }
+    if (params.get('bank')) {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+    loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const payload = {
+        enablebanking_app_id: appId.trim(),
+        enablebanking_redirect_url: redirectUrl.trim(),
+      };
+      // Only send the key if a new one was pasted (else we'd store the mask).
+      if (privateKey.trim() !== '') payload.enablebanking_private_key = privateKey.trim();
+      await api.put('/settings', payload);
+      toast.success('Bank sync settings saved');
+      setPrivateKey('');
+      await loadAll();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const loadBanks = async () => {
+    setLoadingBanks(true);
+    try {
+      const list = await api.get(`/bank/aspsps?country=${encodeURIComponent(country.trim().toUpperCase())}`);
+      setBanks(list);
+      setSelectedBank(list[0]?.name || '');
+      if (list.length === 0) toast('No banks found for that country.', { icon: 'ℹ️' });
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setLoadingBanks(false);
+    }
+  };
+
+  const connect = async () => {
+    if (!selectedBank) return;
+    setConnecting(true);
+    try {
+      const { url } = await api.post('/bank/connect', {
+        aspsp_name: selectedBank,
+        country: country.trim().toUpperCase(),
+      });
+      window.location.href = url; // off to the bank's consent page
+    } catch (err) {
+      toast.error(err.message);
+      setConnecting(false);
+    }
+  };
+
+  const syncNow = async () => {
+    setSyncing(true);
+    try {
+      const c = await api.post('/bank/sync', {});
+      if (c.noop) {
+        toast('Nothing to sync — configure credentials and connect a bank first.', { icon: 'ℹ️' });
+      } else {
+        toast.success(`Fetched ${c.fetched}, new ${c.inserted}, duplicates ${c.skippedDuplicates}`);
+        if (c.error) toast.error(c.error);
+      }
+      await loadAll();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const toggleAccount = async (acc) => {
+    try {
+      await api.put(`/bank/accounts/${acc.id}`, { active: acc.active ? false : true });
+      await loadAll();
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      await api.delete(`/bank/connections/${deleteTarget.id}`);
+      toast.success('Bank connection removed');
+      setDeleteTarget(null);
+      await loadAll();
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
+  const configured = status?.configured;
+
+  return (
+    <SectionCard
+      title="Bank sync (Enable Banking)"
+      description="Pull transactions from your banks (e.g. CGD, Novo Banco) into Pending via the Enable Banking PSD2 aggregator. Register a free personal application at enablebanking.com, download its private key, and paste the credentials here. Synced transactions are reviewed on the Pending page — nothing enters the ledger automatically. Sync runs daily at 07:30, or on demand below."
+    >
+      <div className="space-y-5">
+        <form onSubmit={handleSave} className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Application ID</label>
+              <input
+                type="text"
+                value={appId}
+                onChange={(e) => setAppId(e.target.value)}
+                placeholder="from enablebanking.com → Applications"
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Redirect URL</label>
+              <input
+                type="text"
+                value={redirectUrl}
+                onChange={(e) => setRedirectUrl(e.target.value)}
+                placeholder={status?.redirect_url || 'http://localhost:3000/api/bank/callback'}
+                className={inputCls}
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Must be registered on the Enable Banking application. Leave blank to use{' '}
+                <code className="text-gray-400">{status?.redirect_url || '…'}</code>
+              </p>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Private key (PEM)</label>
+            <textarea
+              rows={3}
+              value={privateKey}
+              onChange={(e) => setPrivateKey(e.target.value)}
+              placeholder={privateKeyMasked ? `Currently set: ${privateKeyMasked} — leave blank to keep` : '-----BEGIN PRIVATE KEY-----'}
+              className={`${inputCls} font-mono`}
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-2 justify-end">
+            {configured && status?.application && (
+              <span className="text-xs text-emerald-400 mr-auto">
+                ✓ Credentials OK — app “{status.application.name}” ({status.application.environment})
+              </span>
+            )}
+            {configured && status?.error && (
+              <span className="text-xs text-red-400 mr-auto">Credentials check failed: {status.error}</span>
+            )}
+            <button
+              type="submit"
+              disabled={saving}
+              className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </form>
+
+        {configured && !status?.error && (
+          <div className="border-t border-gray-800 pt-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-gray-300">Connected banks</h3>
+              <button
+                type="button"
+                onClick={syncNow}
+                disabled={syncing || connections.length === 0}
+                className="rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-sm font-medium px-3 py-1.5 transition-colors"
+              >
+                {syncing ? 'Syncing…' : '⟳ Sync now'}
+              </button>
+            </div>
+
+            {connections.length === 0 && <p className="text-sm text-gray-500">No banks connected yet.</p>}
+
+            {connections.map((conn) => (
+              <div key={conn.id} className="border border-gray-800 rounded-lg px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-200">
+                      {conn.aspsp_name} <span className="text-gray-500">({conn.aspsp_country})</span>
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      Consent valid until {conn.valid_until ? conn.valid_until.slice(0, 10) : 'unknown'} — reconnect
+                      after it expires.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setDeleteTarget(conn)}
+                    className="text-red-400 hover:text-red-300 text-sm shrink-0"
+                  >
+                    Remove
+                  </button>
+                </div>
+                {conn.accounts.length > 0 && (
+                  <div className="mt-2 divide-y divide-gray-800 border-t border-gray-800">
+                    {conn.accounts.map((acc) => (
+                      <div key={acc.id} className={`flex items-center gap-3 py-2 ${acc.active ? '' : 'opacity-50'}`}>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs text-gray-300 truncate">
+                            {acc.name || 'Account'} {acc.iban ? `— ${acc.iban}` : ''} ({acc.currency || '—'})
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {acc.last_sync ? `Last sync ${acc.last_sync.slice(0, 16).replace('T', ' ')}` : 'Never synced'}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => toggleAccount(acc)}
+                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0 ${
+                            acc.active ? 'bg-emerald-600' : 'bg-gray-600'
+                          }`}
+                          aria-label={acc.active ? 'Pause account sync' : 'Resume account sync'}
+                        >
+                          <span
+                            className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                              acc.active ? 'translate-x-5' : 'translate-x-1'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            <div className="border border-gray-800 rounded-lg p-4 bg-gray-950/50 space-y-3">
+              <h4 className="text-sm font-medium text-gray-300">Connect a bank</h4>
+              <div className="flex flex-wrap gap-2 items-end">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Country</label>
+                  <input
+                    type="text"
+                    value={country}
+                    onChange={(e) => setCountry(e.target.value)}
+                    maxLength={2}
+                    className={`${inputCls} w-20 uppercase`}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={loadBanks}
+                  disabled={loadingBanks || country.trim().length !== 2}
+                  className="rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-sm font-medium px-4 py-2 transition-colors"
+                >
+                  {loadingBanks ? 'Loading…' : banks === null ? 'Load banks' : 'Reload banks'}
+                </button>
+                {banks !== null && banks.length > 0 && (
+                  <>
+                    <div className="flex-1 min-w-[12rem]">
+                      <label className="block text-xs text-gray-500 mb-1">Bank</label>
+                      <select value={selectedBank} onChange={(e) => setSelectedBank(e.target.value)} className={inputCls}>
+                        {banks.map((b) => (
+                          <option key={b.name} value={b.name}>
+                            {b.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={connect}
+                      disabled={connecting || !selectedBank}
+                      className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
+                    >
+                      {connecting ? 'Redirecting…' : 'Connect →'}
+                    </button>
+                  </>
+                )}
+              </div>
+              <p className="text-xs text-gray-500">
+                You'll be sent to the bank to authorize read-only access, then brought back here. Consents last up to
+                ~90 days (bank-dependent).
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center px-4 z-50">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 max-w-sm w-full">
+            <h2 className="font-semibold text-lg mb-2">Remove this bank connection?</h2>
+            <p className="text-sm text-gray-400 mb-4">
+              {deleteTarget.aspsp_name} ({deleteTarget.aspsp_country}). Syncing stops for its accounts;
+              already-synced pending transactions are kept.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setDeleteTarget(null)}
+                className="rounded-lg bg-gray-800 hover:bg-gray-700 text-sm font-medium px-4 py-2 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                className="rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-medium px-4 py-2 transition-colors"
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
+// Create/edit form for one IMAP mailbox account. Auto-suggests host/port for
+// known providers and shows their app-password instructions.
+function MailboxForm({ initial, onDone, onCancel }) {
+  const [label, setLabel] = useState(initial?.label || '');
+  const [host, setHost] = useState(initial?.host || '');
+  const [port, setPort] = useState(initial ? String(initial.port) : '993');
+  const [username, setUsername] = useState(initial?.username || '');
+  const [password, setPassword] = useState('');
+  const [tls, setTls] = useState(initial ? String(initial.tls !== 0) : 'true');
+  const [allowlist, setAllowlist] = useState(initial?.sender_allowlist || '');
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+
+  const provider = providerFor(username);
+
+  const handleUsernameBlur = () => {
+    // Suggest host/port (and a label) for known providers, without overwriting
+    // anything the user already typed.
+    if (provider && !host.trim()) {
+      setHost(provider.host);
+      setPort('993');
+      setTls('true');
+      if (!label.trim()) setLabel(provider.name);
+    }
+  };
+
+  const payload = () => ({
+    label: label.trim(),
+    host: host.trim(),
+    port,
+    username: username.trim(),
+    ...(password.trim() ? { password: password.trim() } : {}),
+    tls,
+    sender_allowlist: allowlist,
+  });
+
+  const handleTest = async () => {
+    setTesting(true);
+    try {
+      const res = await fetch('/api/imap-accounts/test', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload(), ...(initial ? { id: initial.id } : {}) }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) toast.success('IMAP connection OK');
+      else toast.error(data.error || 'IMAP connection failed');
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      if (initial) {
+        await api.put(`/imap-accounts/${initial.id}`, payload());
+        toast.success('Mailbox updated');
+      } else {
+        await api.post('/imap-accounts', payload());
+        toast.success('Mailbox added');
+      }
+      onDone();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4 border border-gray-800 rounded-lg p-4 bg-gray-950/50">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Username (email address)</label>
+          <input
+            required
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            onBlur={handleUsernameBlur}
+            placeholder="you@gmail.com"
+            className={inputCls}
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Label</label>
+          <input
+            required
+            type="text"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="e.g. Gmail, Zoho"
+            className={inputCls}
+          />
+        </div>
+      </div>
+
+      {provider && <p className="text-xs text-gray-400 leading-relaxed">{provider.help}</p>}
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="sm:col-span-2">
+          <label className="block text-xs text-gray-500 mb-1">IMAP host</label>
+          <input
+            required
+            type="text"
+            value={host}
+            onChange={(e) => setHost(e.target.value)}
+            placeholder="imap.example.com"
+            className={inputCls}
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Port</label>
+          <input type="number" value={port} onChange={(e) => setPort(e.target.value)} className={inputCls} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Password (app password)</label>
+          <input
+            type="password"
+            required={!initial}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder={initial ? initial.password_masked || 'Leave blank to keep' : 'App password'}
+            className={inputCls}
+          />
+          {initial && <p className="text-xs text-gray-500 mt-1">Leave blank to keep the current password.</p>}
+        </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">TLS</label>
+          <select value={tls} onChange={(e) => setTls(e.target.value)} className={inputCls}>
+            <option value="true">On (implicit TLS)</option>
+            <option value="false">Off</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-xs text-gray-500 mb-1">Sender allow-list (optional)</label>
+        <textarea
+          rows={2}
+          value={allowlist}
+          onChange={(e) => setAllowlist(e.target.value)}
+          placeholder="billing@shop.com, noreply@utility.com — leave blank to accept any sender"
+          className={inputCls}
+        />
+        <p className="text-xs text-gray-500 mt-1">
+          Comma or newline separated, applies to this mailbox only. Empty means no sender filter.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-2 justify-end pt-1">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-lg bg-gray-800 hover:bg-gray-700 text-sm font-medium px-4 py-2 transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={handleTest}
+          disabled={testing}
+          className="rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-sm font-medium px-4 py-2 transition-colors"
+        >
+          {testing ? 'Testing…' : 'Test connection'}
+        </button>
+        <button
+          type="submit"
+          disabled={saving}
+          className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
+        >
+          {saving ? 'Saving…' : initial ? 'Save mailbox' : 'Add mailbox'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -36,37 +625,30 @@ export default function Settings() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
 
-  // Phase 6 — Email invoice auto-tracking
-  const [imapHost, setImapHost] = useState('');
-  const [imapPort, setImapPort] = useState('993');
-  const [imapUser, setImapUser] = useState('');
-  const [imapPassword, setImapPassword] = useState('');
-  const [imapPasswordMasked, setImapPasswordMasked] = useState('');
-  const [imapTls, setImapTls] = useState('true');
+  // Phase 6 — Email invoice auto-tracking (global settings + mailbox accounts)
   const [pollInterval, setPollInterval] = useState('15');
-  const [allowlist, setAllowlist] = useState('');
   const [deepseekKey, setDeepseekKey] = useState('');
   const [deepseekMasked, setDeepseekMasked] = useState('');
   const [savingEmail, setSavingEmail] = useState(false);
-  const [testingImap, setTestingImap] = useState(false);
+  const [accounts, setAccounts] = useState([]);
+  const [accountForm, setAccountForm] = useState(null); // null | 'new' | account object
+  const [deleteAccountTarget, setDeleteAccountTarget] = useState(null);
+  const [togglingAccountId, setTogglingAccountId] = useState(null);
+
+  const loadAccounts = () => api.get('/imap-accounts').then(setAccounts);
 
   const load = () => {
     setLoading(true);
-    return api
-      .get('/settings')
-      .then((data) => {
+    return Promise.all([
+      api.get('/settings').then((data) => {
         setWebhookMasked(data.discord_webhook_url || '');
         setThreshold(String(data.notification_budget_threshold ?? '80'));
         setWeeklyDay(String(data.weekly_summary_day ?? '1'));
-        setImapHost(data.imap_host || '');
-        setImapPort(String(data.imap_port ?? '993'));
-        setImapUser(data.imap_user || '');
-        setImapPasswordMasked(data.imap_password || '');
-        setImapTls(String(data.imap_tls ?? 'true'));
         setPollInterval(String(data.imap_poll_interval_minutes ?? '15'));
-        setAllowlist(data.imap_sender_allowlist || '');
         setDeepseekMasked(data.deepseek_api_key || '');
-      })
+      }),
+      loadAccounts(),
+    ])
       .catch((err) => toast.error(err.message))
       .finally(() => setLoading(false));
   };
@@ -134,21 +716,12 @@ export default function Settings() {
     e.preventDefault();
     setSavingEmail(true);
     try {
-      const payload = {
-        imap_host: imapHost.trim(),
-        imap_port: imapPort,
-        imap_user: imapUser.trim(),
-        imap_tls: imapTls,
-        imap_poll_interval_minutes: pollInterval,
-        imap_sender_allowlist: allowlist,
-      };
-      // Only send secrets if the user typed a new one (else we'd overwrite the
-      // stored value with its masked preview).
-      if (imapPassword.trim() !== '') payload.imap_password = imapPassword.trim();
+      const payload = { imap_poll_interval_minutes: pollInterval };
+      // Only send the secret if the user typed a new one (else we'd overwrite
+      // the stored value with its masked preview).
       if (deepseekKey.trim() !== '') payload.deepseek_api_key = deepseekKey.trim();
       await api.put('/settings', payload);
       toast.success('Email settings saved');
-      setImapPassword('');
       setDeepseekKey('');
       await load();
     } catch (err) {
@@ -158,24 +731,28 @@ export default function Settings() {
     }
   };
 
-  const handleTestImap = async () => {
-    setTestingImap(true);
+  const toggleAccountActive = async (account) => {
+    setTogglingAccountId(account.id);
     try {
-      const body = { host: imapHost.trim(), port: imapPort, user: imapUser.trim(), tls: imapTls };
-      if (imapPassword.trim() !== '') body.password = imapPassword.trim();
-      const res = await fetch('/api/settings/test-imap', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.success) toast.success('IMAP connection OK');
-      else toast.error(data.error || 'IMAP connection failed');
+      await api.put(`/imap-accounts/${account.id}`, { active: account.active ? false : true });
+      toast.success(account.active ? 'Mailbox paused' : 'Mailbox reactivated');
+      await loadAccounts();
     } catch (err) {
       toast.error(err.message);
     } finally {
-      setTestingImap(false);
+      setTogglingAccountId(null);
+    }
+  };
+
+  const confirmDeleteAccount = async () => {
+    if (!deleteAccountTarget) return;
+    try {
+      await api.delete(`/imap-accounts/${deleteAccountTarget.id}`);
+      toast.success('Mailbox deleted');
+      setDeleteAccountTarget(null);
+      await loadAccounts();
+    } catch (err) {
+      toast.error(err.message);
     }
   };
 
@@ -291,126 +868,149 @@ export default function Settings() {
 
       <SectionCard
         title="Email invoice auto-tracking"
-        description="Poll a read-only IMAP mailbox for invoices/receipts and extract them with DeepSeek into Pending transactions. The mailbox is never modified."
+        description="Poll one or more read-only IMAP mailboxes for invoices/receipts and extract them with DeepSeek into Pending transactions. Mailboxes are never modified. Gmail and Zoho require an app password — add a mailbox below for provider-specific instructions."
       >
-        <form onSubmit={handleSaveEmail} className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">IMAP host</label>
-              <input
-                type="text"
-                value={imapHost}
-                onChange={(e) => setImapHost(e.target.value)}
-                placeholder="imap.example.com"
-                className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
+        <div className="space-y-5">
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-medium text-gray-300">Mailboxes</h3>
+              {accountForm === null && (
+                <button
+                  type="button"
+                  onClick={() => setAccountForm('new')}
+                  className="rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium px-3 py-1.5 transition-colors"
+                >
+                  + Add mailbox
+                </button>
+              )}
             </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Port</label>
-              <input
-                type="number"
-                value={imapPort}
-                onChange={(e) => setImapPort(e.target.value)}
-                className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+
+            {accounts.length === 0 && accountForm === null && (
+              <p className="text-sm text-gray-500">No mailboxes configured yet.</p>
+            )}
+
+            {accounts.length > 0 && (
+              <div className="border border-gray-800 rounded-lg divide-y divide-gray-800 mb-3">
+                {accounts.map((acc) => (
+                  <div key={acc.id} className={`flex items-center gap-3 px-4 py-3 ${acc.active ? '' : 'opacity-50'}`}>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-200 truncate">{acc.label}</p>
+                      <p className="text-xs text-gray-500 truncate">
+                        {acc.username} — {acc.host}:{acc.port}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => toggleAccountActive(acc)}
+                      disabled={togglingAccountId === acc.id}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 shrink-0 ${
+                        acc.active ? 'bg-emerald-600' : 'bg-gray-600'
+                      }`}
+                      aria-label={acc.active ? 'Pause mailbox' : 'Reactivate mailbox'}
+                    >
+                      <span
+                        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                          acc.active ? 'translate-x-5' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                    <button
+                      onClick={() => setAccountForm(acc)}
+                      className="text-emerald-400 hover:text-emerald-300 text-sm shrink-0"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => setDeleteAccountTarget(acc)}
+                      className="text-red-400 hover:text-red-300 text-sm shrink-0"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {accountForm !== null && (
+              <MailboxForm
+                initial={accountForm === 'new' ? null : accountForm}
+                onDone={async () => {
+                  setAccountForm(null);
+                  await loadAccounts();
+                }}
+                onCancel={() => setAccountForm(null)}
               />
-            </div>
+            )}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Username</label>
-              <input
-                type="text"
-                value={imapUser}
-                onChange={(e) => setImapUser(e.target.value)}
-                className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
+          <form onSubmit={handleSaveEmail} className="space-y-4 border-t border-gray-800 pt-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Poll interval (minutes)</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="1440"
+                  value={pollInterval}
+                  onChange={(e) => setPollInterval(e.target.value)}
+                  className={inputCls}
+                />
+                <p className="text-xs text-gray-500 mt-1">One polling cycle covers every active mailbox.</p>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">DeepSeek API key</label>
+                <input
+                  type="password"
+                  value={deepseekKey}
+                  onChange={(e) => setDeepseekKey(e.target.value)}
+                  placeholder={deepseekMasked || 'sk-...'}
+                  className={inputCls}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  {deepseekMasked ? `Currently set: ${deepseekMasked}` : 'Not configured.'} Leave blank to keep it.
+                </p>
+              </div>
             </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Password</label>
-              <input
-                type="password"
-                value={imapPassword}
-                onChange={(e) => setImapPassword(e.target.value)}
-                placeholder={imapPasswordMasked || 'Mailbox password / app password'}
-                className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                {imapPasswordMasked ? `Currently set: ${imapPasswordMasked}` : 'Not configured.'} Leave blank to keep it.
-              </p>
-            </div>
-          </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">TLS</label>
-              <select
-                value={imapTls}
-                onChange={(e) => setImapTls(e.target.value)}
-                className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={savingEmail}
+                className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
               >
-                <option value="true">On (implicit TLS)</option>
-                <option value="false">Off</option>
-              </select>
+                {savingEmail ? 'Saving…' : 'Save'}
+              </button>
             </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Poll interval (minutes)</label>
-              <input
-                type="number"
-                min="1"
-                max="1440"
-                value={pollInterval}
-                onChange={(e) => setPollInterval(e.target.value)}
-                className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Sender allow-list (optional)</label>
-            <textarea
-              rows={2}
-              value={allowlist}
-              onChange={(e) => setAllowlist(e.target.value)}
-              placeholder="billing@shop.com, noreply@utility.com — leave blank to accept any sender"
-              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            />
-            <p className="text-xs text-gray-500 mt-1">Comma or newline separated. Empty means no sender filter.</p>
-          </div>
-
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">DeepSeek API key</label>
-            <input
-              type="password"
-              value={deepseekKey}
-              onChange={(e) => setDeepseekKey(e.target.value)}
-              placeholder={deepseekMasked || 'sk-...'}
-              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              {deepseekMasked ? `Currently set: ${deepseekMasked}` : 'Not configured.'} Leave blank to keep it.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-2 justify-end pt-2">
-            <button
-              type="button"
-              onClick={handleTestImap}
-              disabled={testingImap}
-              className="rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-sm font-medium px-4 py-2 transition-colors"
-            >
-              {testingImap ? 'Testing…' : 'Test IMAP connection'}
-            </button>
-            <button
-              type="submit"
-              disabled={savingEmail}
-              className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
-            >
-              {savingEmail ? 'Saving…' : 'Save'}
-            </button>
-          </div>
-        </form>
+          </form>
+        </div>
       </SectionCard>
+
+      {deleteAccountTarget && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center px-4 z-50">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 max-w-sm w-full">
+            <h2 className="font-semibold text-lg mb-2">Delete this mailbox?</h2>
+            <p className="text-sm text-gray-400 mb-4">
+              {deleteAccountTarget.label} ({deleteAccountTarget.username}). Polling stops for this mailbox;
+              already-extracted pending transactions are kept.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setDeleteAccountTarget(null)}
+                className="rounded-lg bg-gray-800 hover:bg-gray-700 text-sm font-medium px-4 py-2 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteAccount}
+                className="rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-medium px-4 py-2 transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <BankSyncSection />
 
       <SectionCard title="Change password">
         <form onSubmit={handleChangePassword} className="space-y-4 max-w-sm">

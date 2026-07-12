@@ -184,10 +184,12 @@ export function buildPendingRow(extracted, { categories, otherId, emailReceivedD
 // ---------------------------------------------------------------------------
 
 /**
- * Calls DeepSeek's OpenAI-compatible chat completions endpoint and returns the
- * raw assistant message content (a string). Throws on transport/HTTP errors.
+ * Generic call to DeepSeek's OpenAI-compatible chat completions endpoint with
+ * an arbitrary system prompt. Returns the raw assistant message content (a
+ * string). Throws on transport/HTTP errors. Shared by the email invoice
+ * extractor below and the PDF statement importer (statement-import.js).
  */
-export async function callDeepSeek({ bodyText, categoryNames, apiKey }) {
+export async function callDeepSeekChat({ systemPrompt, userContent, apiKey }) {
   const res = await fetch(`${baseUrl()}/v1/chat/completions`, {
     method: 'POST',
     headers: {
@@ -197,8 +199,8 @@ export async function callDeepSeek({ bodyText, categoryNames, apiKey }) {
     body: JSON.stringify({
       model: DEEPSEEK_MODEL,
       messages: [
-        { role: 'system', content: buildSystemPrompt(categoryNames) },
-        { role: 'user', content: bodyText },
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userContent },
       ],
       temperature: 0,
       response_format: { type: 'json_object' },
@@ -216,6 +218,18 @@ export async function callDeepSeek({ bodyText, categoryNames, apiKey }) {
     throw new Error('DeepSeek response had no message content');
   }
   return content;
+}
+
+/**
+ * Calls DeepSeek with the invoice-extraction prompt and returns the raw
+ * assistant message content (a string). Throws on transport/HTTP errors.
+ */
+export async function callDeepSeek({ bodyText, categoryNames, apiKey }) {
+  return callDeepSeekChat({
+    systemPrompt: buildSystemPrompt(categoryNames),
+    userContent: bodyText,
+    apiKey,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +253,7 @@ function otherCategoryId(categories) {
  *
  * Never throws — returns a small result object describing the outcome:
  *   { inserted: true, pendingId, row }             extraction succeeded
+ *   { inserted: false, reason: 'empty-body' }       no body text to extract from
  *   { inserted: false, reason: 'no-api-key' }       DeepSeek not configured
  *   { inserted: false, reason: 'api-error', error } transport/HTTP failure
  *   { inserted: false, reason: 'unparseable' }      response wasn't usable JSON
@@ -246,6 +261,10 @@ function otherCategoryId(categories) {
  *   { inserted: false, reason: 'no-amount' }         no usable amount extracted
  */
 export async function extractAndInsertPending(email) {
+  if (typeof email.bodyText !== 'string' || !email.bodyText.trim()) {
+    return { inserted: false, reason: 'empty-body' };
+  }
+
   const apiKey = getSetting('deepseek_api_key');
   if (!apiKey) return { inserted: false, reason: 'no-api-key' };
 
@@ -295,8 +314,8 @@ export async function extractAndInsertPending(email) {
     .prepare(
       `INSERT INTO pending_transactions
          (type, amount, currency, description, suggested_category_id, date,
-          source_email_subject, source_email_from, source_email_date, raw_extracted_json, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`
+          source_email_subject, source_email_from, source_email_date, raw_extracted_json, status, account_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`
     )
     .run(
       row.type,
@@ -308,7 +327,8 @@ export async function extractAndInsertPending(email) {
       email.subject || null,
       email.from || null,
       email.receivedAt || null,
-      rawStored
+      rawStored,
+      email.accountId ?? null
     );
 
   return { inserted: true, pendingId: info.lastInsertRowid, row };
@@ -322,6 +342,7 @@ export default {
   clampConfidence,
   resolveCategoryId,
   buildPendingRow,
+  callDeepSeekChat,
   callDeepSeek,
   extractAndInsertPending,
 };

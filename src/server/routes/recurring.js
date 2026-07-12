@@ -2,7 +2,7 @@ import express from 'express';
 import db from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { isValidDateString, todayLocalDate, addDays } from '../utils/dates.js';
-import { advanceDueDate } from '../services/recurring.js';
+import { advanceDueDate, firstWeekdayOccurrenceOnOrAfter } from '../services/recurring.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -32,7 +32,10 @@ function validateRecurringInput(body, { partial = false } = {}) {
       errors.push(`frequency must be one of ${VALID_FREQUENCIES.join(', ')}`);
     }
   }
-  if (!partial || body.next_due !== undefined) {
+  // next_due is optional for monthly weekday mode (week_of_month set) — the
+  // handler derives it from the rule. Otherwise it stays required on create.
+  const weekdayMode = body.frequency === 'monthly' && body.week_of_month != null;
+  if ((!partial && !weekdayMode) || (body.next_due !== undefined && body.next_due !== null)) {
     if (!isValidDateString(body.next_due)) {
       errors.push('next_due must be a valid YYYY-MM-DD date');
     }
@@ -52,15 +55,26 @@ function validateRecurringInput(body, { partial = false } = {}) {
       errors.push('day_of_week must be an integer between 0 (Sun) and 6 (Sat)');
     }
   }
+  if (body.week_of_month !== undefined && body.week_of_month !== null) {
+    if (!Number.isInteger(body.week_of_month) || body.week_of_month < -1 || body.week_of_month === 0 || body.week_of_month > 4) {
+      errors.push('week_of_month must be 1-4 (Nth weekday) or -1 (last weekday of the month)');
+    }
+  }
 
   return errors;
 }
 
 // Enforces the frequency ↔ schedule-field relationship on a fully-merged row.
+// Monthly has two modes: fixed day_of_month, or "Nth/last weekday"
+// (week_of_month + day_of_week).
 function validateFrequencyFields(row) {
   if (row.frequency === 'monthly') {
-    if (!Number.isInteger(row.day_of_month) || row.day_of_month < 1 || row.day_of_month > 31) {
-      return 'day_of_month (1-31) is required for monthly recurring transactions';
+    if (row.week_of_month != null) {
+      if (!Number.isInteger(row.day_of_week) || row.day_of_week < 0 || row.day_of_week > 6) {
+        return 'day_of_week (0-6) is required when week_of_month is set';
+      }
+    } else if (!Number.isInteger(row.day_of_month) || row.day_of_month < 1 || row.day_of_month > 31) {
+      return 'day_of_month (1-31) is required for monthly recurring transactions (or set week_of_month for weekday mode)';
     }
   }
   if (row.frequency === 'weekly') {
@@ -119,24 +133,36 @@ router.post('/', (req, res) => {
     description = null,
     category_id,
     frequency,
-    next_due,
   } = req.body;
+  let next_due = req.body.next_due;
 
   let day_of_month = req.body.day_of_month === undefined ? null : req.body.day_of_month;
   let day_of_week = req.body.day_of_week === undefined ? null : req.body.day_of_week;
+  let week_of_month = req.body.week_of_month === undefined ? null : req.body.week_of_month;
+
+  // Normalise irrelevant schedule fields to NULL so they can't mislead later.
+  // day_of_week is meaningful for weekly AND monthly weekday mode.
+  if (frequency !== 'monthly') week_of_month = null;
+  if (frequency === 'monthly' && week_of_month != null) day_of_month = null;
+  if (frequency !== 'weekly' && !(frequency === 'monthly' && week_of_month != null)) day_of_week = null;
 
   // For yearly templates the anchor day lives in day_of_month so that Feb-29
   // schedules re-expand in leap years (clamp doesn't stick). Derive it from
   // next_due when the client doesn't supply one.
-  if (frequency === 'yearly' && (day_of_month === null || day_of_month === undefined)) {
+  if (frequency === 'yearly' && day_of_month === null) {
     day_of_month = Number(next_due.slice(8, 10));
   }
-  // Normalise irrelevant schedule fields to NULL so they can't mislead later.
-  if (frequency !== 'monthly' && frequency !== 'yearly') day_of_month = null;
-  if (frequency !== 'weekly') day_of_week = null;
 
-  const freqError = validateFrequencyFields({ frequency, day_of_month, day_of_week });
+  const freqError = validateFrequencyFields({ frequency, day_of_month, day_of_week, week_of_month });
   if (freqError) return res.status(400).json({ error: freqError });
+
+  // Weekday mode: next_due is derived from the rule, not typed by hand. When a
+  // date IS provided, it's treated as "start no earlier than" and realigned to
+  // the first matching occurrence.
+  if (frequency === 'monthly' && week_of_month != null) {
+    const base = isValidDateString(next_due) ? next_due : todayLocalDate();
+    next_due = firstWeekdayOccurrenceOnOrAfter(base, day_of_week, week_of_month);
+  }
 
   const typeError = checkCategoryTypeMatch(category_id, type);
   if (typeError) return res.status(400).json({ error: typeError });
@@ -144,10 +170,10 @@ router.post('/', (req, res) => {
   const info = db
     .prepare(
       `INSERT INTO recurring_transactions
-         (type, amount, description, category_id, frequency, day_of_month, day_of_week, next_due, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`
+         (type, amount, description, category_id, frequency, day_of_month, day_of_week, week_of_month, next_due, active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
     )
-    .run(type, amount, description, category_id, frequency, day_of_month, day_of_week, next_due);
+    .run(type, amount, description, category_id, frequency, day_of_month, day_of_week, week_of_month, next_due);
 
   const created = db
     .prepare(`${SELECT_WITH_CATEGORY} WHERE r.id = ?`)
@@ -169,19 +195,36 @@ router.put('/:id', (req, res) => {
   const description = req.body.description !== undefined ? req.body.description : existing.description;
   const category_id = req.body.category_id !== undefined ? req.body.category_id : existing.category_id;
   const frequency = req.body.frequency !== undefined ? req.body.frequency : existing.frequency;
-  let next_due = req.body.next_due !== undefined ? req.body.next_due : existing.next_due;
+  let next_due = req.body.next_due != null ? req.body.next_due : existing.next_due;
   let day_of_month = req.body.day_of_month !== undefined ? req.body.day_of_month : existing.day_of_month;
   let day_of_week = req.body.day_of_week !== undefined ? req.body.day_of_week : existing.day_of_week;
+  let week_of_month = req.body.week_of_month !== undefined ? req.body.week_of_month : existing.week_of_month;
 
   // Derive/normalise schedule fields for the effective frequency.
+  if (frequency !== 'monthly') week_of_month = null;
+  if (frequency === 'monthly' && week_of_month != null) day_of_month = null;
+  if (frequency !== 'weekly' && !(frequency === 'monthly' && week_of_month != null)) day_of_week = null;
   if (frequency === 'yearly' && (day_of_month === null || day_of_month === undefined)) {
     day_of_month = Number(next_due.slice(8, 10));
   }
-  if (frequency !== 'monthly' && frequency !== 'yearly') day_of_month = null;
-  if (frequency !== 'weekly') day_of_week = null;
 
-  const freqError = validateFrequencyFields({ frequency, day_of_month, day_of_week });
+  const freqError = validateFrequencyFields({ frequency, day_of_month, day_of_week, week_of_month });
   if (freqError) return res.status(400).json({ error: freqError });
+
+  // Weekday mode: if this edit touches the schedule, realign next_due to the
+  // first occurrence of the (possibly new) rule. Untouched-schedule edits
+  // (e.g. amount only, active toggle) keep the existing cursor.
+  const touchesSchedule =
+    req.body.frequency !== undefined ||
+    req.body.day_of_week !== undefined ||
+    req.body.week_of_month !== undefined ||
+    req.body.next_due != null;
+  if (frequency === 'monthly' && week_of_month != null && touchesSchedule) {
+    const base = req.body.next_due != null && isValidDateString(req.body.next_due)
+      ? req.body.next_due
+      : todayLocalDate();
+    next_due = firstWeekdayOccurrenceOnOrAfter(base, day_of_week, week_of_month);
+  }
 
   const typeError = checkCategoryTypeMatch(category_id, type);
   if (typeError) return res.status(400).json({ error: typeError });
@@ -195,7 +238,7 @@ router.put('/:id', (req, res) => {
 
   if (active === 1 && existing.active === 0) {
     const today = todayLocalDate();
-    const merged = { frequency, day_of_month, day_of_week };
+    const merged = { frequency, day_of_month, day_of_week, week_of_month };
     let guard = 0;
     while (next_due < today) {
       next_due = advanceDueDate(next_due, merged);
@@ -206,9 +249,9 @@ router.put('/:id', (req, res) => {
   db.prepare(
     `UPDATE recurring_transactions
        SET type = ?, amount = ?, description = ?, category_id = ?, frequency = ?,
-           day_of_month = ?, day_of_week = ?, next_due = ?, active = ?
+           day_of_month = ?, day_of_week = ?, week_of_month = ?, next_due = ?, active = ?
      WHERE id = ?`
-  ).run(type, amount, description, category_id, frequency, day_of_month, day_of_week, next_due, active, id);
+  ).run(type, amount, description, category_id, frequency, day_of_month, day_of_week, week_of_month, next_due, active, id);
 
   const updated = db.prepare(`${SELECT_WITH_CATEGORY} WHERE r.id = ?`).get(id);
   res.json(updated);

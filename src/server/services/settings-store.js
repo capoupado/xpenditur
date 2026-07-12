@@ -34,16 +34,6 @@ function validateWeekday(value) {
 
 // Phase 6 validators. Empty string is always accepted (it clears the value /
 // keeps a secret unset); non-empty values are checked for shape.
-function validatePort(value) {
-  if (value === '') return true;
-  const n = Number(value);
-  return Number.isInteger(n) && n >= 1 && n <= 65535;
-}
-
-function validateBoolish(value) {
-  return value === '' || value === 'true' || value === 'false';
-}
-
 function validatePollInterval(value) {
   if (value === '') return true;
   const n = Number(value);
@@ -57,17 +47,17 @@ function validateAnyString(value) {
 }
 
 // Masks a secret-ish value, showing only its last `visible` characters.
+// Dot count is capped so a multiline secret (e.g. a PEM key) stays displayable.
 export function maskValue(value, visible = 8) {
   if (!value) return '';
   if (value.length <= visible) return '•'.repeat(value.length);
-  return '•'.repeat(Math.max(4, value.length - visible)) + value.slice(-visible);
+  return '•'.repeat(Math.min(24, Math.max(4, value.length - visible))) + value.slice(-visible).replace(/\s+/g, ' ');
 }
 
 // Registry of every known settings key. `validate(value)` runs on PUT (value
 // is always a string or '' at this point); `mask` controls whether GET
 // returns a masked preview instead of the raw value; `encrypt` marks values
-// that must be AES-encrypted at rest using ENCRYPTION_KEY (none yet in Phase
-// 5 — Phase 6's imap_password / deepseek_api_key will set this true).
+// that must be AES-encrypted at rest using ENCRYPTION_KEY (deepseek_api_key).
 export const SETTINGS_REGISTRY = {
   discord_webhook_url: {
     validate: validateDiscordWebhook,
@@ -91,54 +81,16 @@ export const SETTINGS_REGISTRY = {
     default: '1',
   },
   // ---- Phase 6 — Email invoice auto-tracking (IMAP + DeepSeek) ----
-  imap_host: {
-    validate: validateAnyString,
-    validateMessage: 'must be a string',
-    mask: false,
-    encrypt: false,
-    default: '',
-  },
-  imap_port: {
-    validate: validatePort,
-    validateMessage: 'must be an integer 1-65535 (typically 993 for IMAPS)',
-    mask: false,
-    encrypt: false,
-    default: '993',
-  },
-  imap_user: {
-    validate: validateAnyString,
-    validateMessage: 'must be a string',
-    mask: false,
-    encrypt: false,
-    default: '',
-  },
-  imap_password: {
-    validate: validateAnyString,
-    validateMessage: 'must be a string',
-    mask: true,
-    encrypt: true,
-    default: '',
-  },
-  imap_tls: {
-    validate: validateBoolish,
-    validateMessage: "must be 'true' or 'false'",
-    mask: false,
-    encrypt: false,
-    default: 'true',
-  },
+  // Per-mailbox connection settings (host/user/password/tls/allowlist) moved
+  // to the imap_accounts table — see services/imap-accounts.js, including the
+  // one-time migration of the legacy imap_* settings keys. Only settings that
+  // are global across all mailboxes remain here.
   imap_poll_interval_minutes: {
     validate: validatePollInterval,
     validateMessage: 'must be an integer number of minutes between 1 and 1440',
     mask: false,
     encrypt: false,
     default: '15',
-  },
-  imap_sender_allowlist: {
-    validate: validateAnyString,
-    validateMessage: 'must be a string (comma/newline separated addresses, or empty)',
-    mask: false,
-    encrypt: false,
-    default: '',
   },
   deepseek_api_key: {
     validate: validateAnyString,
@@ -147,18 +99,44 @@ export const SETTINGS_REGISTRY = {
     encrypt: true,
     default: '',
   },
-  // Internal cursor: ISO timestamp of the last successful IMAP poll. Not a
-  // user-facing setting (the Settings UI ignores it), but stored here so the
-  // poller's date-window survives restarts. Registered so it goes through the
-  // same get/setSetting plumbing.
-  imap_last_poll: {
+  // ---- Bank sync (Enable Banking PSD2 aggregator) ----
+  // Credentials come from a registered application at enablebanking.com:
+  // the application ID becomes the JWT `kid`, the RSA private key signs it.
+  enablebanking_app_id: {
     validate: validateAnyString,
     validateMessage: 'must be a string',
     mask: false,
     encrypt: false,
     default: '',
   },
+  enablebanking_private_key: {
+    validate: (v) => v === '' || (typeof v === 'string' && v.includes('PRIVATE KEY')),
+    validateMessage: 'must be a PEM private key (-----BEGIN PRIVATE KEY----- ...), or empty to clear',
+    mask: true,
+    encrypt: true,
+    default: '',
+  },
+  // Must exactly match a redirect URL registered on the Enable Banking
+  // application. Empty → derived from the request host at connect time.
+  enablebanking_redirect_url: {
+    validate: (v) => v === '' || /^https?:\/\/.+/.test(v),
+    validateMessage: 'must be an http(s) URL (e.g. http://localhost:3000/api/bank/callback), or empty to derive it automatically',
+    mask: false,
+    encrypt: false,
+    default: '',
+  },
 };
+
+// Exported so imap_accounts passwords (services/imap-accounts.js) share the
+// exact same at-rest encryption (and ENCRYPTION_KEY rotation behaviour) as
+// encrypted settings values.
+export function encryptValue(plain) {
+  return encrypt(plain);
+}
+
+export function decryptValue(stored) {
+  return decrypt(stored);
+}
 
 function encrypt(plain) {
   const key = crypto.createHash('sha256').update(String(process.env.ENCRYPTION_KEY || '')).digest();
@@ -275,5 +253,7 @@ export default {
   setSetting,
   getAllSettingsForDisplay,
   maskValue,
+  encryptValue,
+  decryptValue,
   checkEncryptedSettingsDecryptable,
 };

@@ -8,7 +8,8 @@ import cron from 'node-cron';
 import { processDueRecurring } from './services/recurring.js';
 import { sendWeeklySummary, sendMonthlySummary } from './services/notifications.js';
 import { getSettingNumber } from './services/settings-store.js';
-import { pollInbox } from './services/imap.js';
+import { pollAllInboxes } from './services/imap.js';
+import { syncBankAccounts } from './services/enablebanking.js';
 
 const TZ = process.env.TZ || 'Europe/Lisbon';
 
@@ -55,6 +56,26 @@ export function registerCronJobs() {
   // relative to whenever it's called).
   cron.schedule('0 9 1 * *', () => sendMonthlySummary(), { timezone: TZ });
 
+  // Bank transaction sync (Enable Banking) — once a day at 07:30. Banks
+  // typically book transactions overnight, and each sync only fetches the
+  // window since the last one, so daily is plenty; "Sync now" in Settings
+  // covers impatience. No-ops when Enable Banking isn't configured.
+  cron.schedule(
+    '30 7 * * *',
+    async () => {
+      try {
+        const counts = await syncBankAccounts();
+        if (counts && !counts.noop && counts.inserted > 0) {
+          console.log(`[cron] bank sync: ${counts.inserted} new pending transaction(s).`);
+        }
+        if (counts && counts.error) console.error('[cron] bank sync errors:', counts.error);
+      } catch (err) {
+        console.error('[cron] bank sync failed:', err.message);
+      }
+    },
+    { timezone: TZ }
+  );
+
   // IMAP invoice poll — the interval is a user-editable setting
   // (imap_poll_interval_minutes, default 15), so we can't bake it into a cron
   // expression. Instead a 1-minute tick re-reads the setting each time and
@@ -75,7 +96,7 @@ async function runPollTick() {
   pollInFlight = true;
   lastPollRunMs = Date.now();
   try {
-    const counts = await pollInbox();
+    const counts = await pollAllInboxes();
     if (counts && counts.extracted > 0) {
       console.log(`[cron] imap poll: extracted ${counts.extracted} pending transaction(s).`);
     }

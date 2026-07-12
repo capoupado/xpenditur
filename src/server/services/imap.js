@@ -4,7 +4,9 @@
 // alters the mailbox — no \Seen, no flags. It opens INBOX read-only and finds
 // candidates by a DATE WINDOW (since the last successful poll, minus a 1-day
 // overlap; first ever poll → last 7 days), so a user reading their own mail can
-// never hide an invoice. Deduplication is solely via the processed_emails table
+// never hide an invoice. A manual backfill can instead search an explicit
+// fromDate..toDate window without touching the incremental cursor.
+// Deduplication is solely via the processed_emails table
 // keyed on the Message-ID header (falling back to a hash of from+date+subject
 // when a message has no Message-ID).
 //
@@ -15,9 +17,9 @@
 
 import crypto from 'crypto';
 import db from '../db.js';
-import { getSetting, getSettingNumber } from './settings-store.js';
 import { todayLocalDate, addDays } from '../utils/dates.js';
 import { extractAndInsertPending } from './invoice-parser.js';
+import { listActiveAccountConfigs, updateLastPoll } from './imap-accounts.js';
 
 // Case-insensitive subject indicators (plan.md).
 export const SUBJECT_KEYWORDS = [
@@ -128,35 +130,21 @@ export function computeSinceDate(lastPollIso, today = todayLocalDate()) {
 }
 
 // ---------------------------------------------------------------------------
-// Dedup helpers (processed_emails is the sole dedup authority)
+// Dedup helpers (processed_emails is the sole dedup authority, per account —
+// the same Message-ID arriving in two mailboxes is tracked independently)
 // ---------------------------------------------------------------------------
 
-export function isProcessed(messageId) {
-  return !!db.prepare('SELECT 1 FROM processed_emails WHERE message_id = ?').get(messageId);
+export function isProcessed(accountId, messageId) {
+  return !!db
+    .prepare('SELECT 1 FROM processed_emails WHERE account_id = ? AND message_id = ?')
+    .get(accountId, messageId);
 }
 
-export function recordProcessed(messageId) {
-  db.prepare('INSERT OR IGNORE INTO processed_emails (message_id) VALUES (?)').run(messageId);
-}
-
-// ---------------------------------------------------------------------------
-// Settings / configuration
-// ---------------------------------------------------------------------------
-
-/**
- * Read IMAP connection config from settings. Returns null when incomplete
- * (host/user/password missing) — the poller then becomes a silent no-op.
- */
-export function readImapConfig(overrides = {}) {
-  const host = overrides.host ?? getSetting('imap_host');
-  const user = overrides.user ?? getSetting('imap_user');
-  const password = overrides.password ?? getSetting('imap_password');
-  const port = Number(overrides.port ?? getSettingNumber('imap_port', 993));
-  const tlsRaw = overrides.tls ?? getSetting('imap_tls');
-  const secure = tlsRaw === undefined || tlsRaw === null ? true : String(tlsRaw) !== 'false';
-
-  if (!host || !user || !password) return null;
-  return { host, port: Number.isFinite(port) ? port : 993, user, password, secure };
+export function recordProcessed(accountId, messageId) {
+  db.prepare('INSERT OR IGNORE INTO processed_emails (account_id, message_id) VALUES (?, ?)').run(
+    accountId,
+    messageId
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -208,12 +196,12 @@ export function pickTextPart(structure) {
   return html || null;
 }
 
-async function fetchBodyText(client, seq) {
+async function fetchBodyText(client, uid) {
   try {
-    const msg = await client.fetchOne(seq, { bodyStructure: true });
+    const msg = await client.fetchOne(uid, { bodyStructure: true }, { uid: true });
     const pick = pickTextPart(msg?.bodyStructure);
     if (!pick) return '';
-    const dl = await client.download(seq, pick.part, { uid: false });
+    const dl = await client.download(uid, pick.part, { uid: true });
     if (!dl || !dl.content) return '';
     const raw = await streamToString(dl.content);
     return pick.kind === 'text/html'
@@ -230,30 +218,36 @@ async function fetchBodyText(client, seq) {
 // ---------------------------------------------------------------------------
 
 /**
- * Run one poll cycle. Connects read-only, searches by date window, filters
+ * Poll a single account. Connects read-only, searches by date window, filters
  * candidates, dedups via processed_emails, records + extracts each new one.
  * Never throws (connection errors are logged and the cycle is skipped).
  *
- * @returns counts: { examined, matched, extracted, skippedDuplicates, skipped, error? }
+ * @param config decrypted account config from imap-accounts.js
+ * @param range  optional { fromDate, toDate } (YYYY-MM-DD, inclusive) for a
+ *               manual backfill poll. A ranged poll searches exactly that
+ *               window and NEVER advances the account's last_poll cursor, so
+ *               the regular incremental polling is unaffected.
+ * @returns counts: { account, examined, matched, extracted, skippedDuplicates, skipped, error? }
  */
-export async function pollInbox() {
-  const counts = { examined: 0, matched: 0, extracted: 0, skippedDuplicates: 0, skipped: 0 };
+export async function pollAccount(config, range = null) {
+  const counts = {
+    account: config.label,
+    examined: 0,
+    matched: 0,
+    extracted: 0,
+    skippedDuplicates: 0,
+    skipped: 0,
+  };
 
-  const config = readImapConfig();
-  if (!config) {
-    // Incomplete settings → silent no-op (documented contract).
-    return { ...counts, skipped: 0, noop: true };
-  }
-
-  const allowlist = parseAllowlist(getSetting('imap_sender_allowlist'));
+  const allowlist = parseAllowlist(config.senderAllowlist);
   const today = todayLocalDate();
-  const sinceDate = computeSinceDate(getSetting('imap_last_poll'), today);
+  const sinceDate = range ? range.fromDate : computeSinceDate(config.lastPoll, today);
 
   let client;
   try {
     client = await connectClient(config);
   } catch (err) {
-    console.error('[imap] Connection failed (skipping cycle):', err.message);
+    console.error(`[imap] Connection failed for "${config.label}" (skipping cycle):`, err.message);
     return { ...counts, error: err.message };
   }
 
@@ -261,7 +255,11 @@ export async function pollInbox() {
     // READ-ONLY open — never mutates flags/seen state.
     await client.mailboxOpen('INBOX', { readOnly: true });
 
-    const uids = await client.search({ since: new Date(`${sinceDate}T00:00:00Z`) }, { uid: true });
+    // IMAP BEFORE is exclusive and date-granular, so an inclusive toDate means
+    // BEFORE toDate+1.
+    const criteria = { since: new Date(`${sinceDate}T00:00:00Z`) };
+    if (range) criteria.before = new Date(`${addDays(range.toDate, 1)}T00:00:00Z`);
+    const uids = await client.search(criteria, { uid: true });
     const list = Array.isArray(uids) ? uids : [];
 
     for (const uid of list) {
@@ -288,17 +286,24 @@ export async function pollInbox() {
       counts.matched++;
 
       const dedupId = messageIdFor(message);
-      if (isProcessed(dedupId)) {
+      if (isProcessed(config.id, dedupId)) {
         counts.skippedDuplicates++;
         continue;
       }
 
       // Record FIRST so the email is deduped whether or not extraction works.
-      recordProcessed(dedupId);
+      recordProcessed(config.id, dedupId);
 
       const receivedIso = message.date || new Date().toISOString();
       const receivedDate = receivedIso.slice(0, 10);
       const bodyText = await fetchBodyText(client, uid);
+      if (!bodyText) {
+        // An empty prompt only produces hallucinated extractions — don't call
+        // DeepSeek at all.
+        console.error(`[imap] Empty body for "${message.subject}" — skipping extraction.`);
+        counts.skipped++;
+        continue;
+      }
 
       const result = await extractAndInsertPending({
         subject: message.subject,
@@ -306,17 +311,17 @@ export async function pollInbox() {
         receivedAt: receivedIso,
         receivedDate,
         bodyText,
+        accountId: config.id,
       });
       if (result.inserted) counts.extracted++;
       else counts.skipped++;
     }
 
-    // Advance the cursor only on a fully successful cycle.
-    db.prepare(
-      'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
-    ).run('imap_last_poll', new Date().toISOString());
+    // Advance this account's cursor only on a fully successful REGULAR cycle —
+    // a manual ranged backfill must not disturb incremental polling.
+    if (!range) updateLastPoll(config.id, new Date().toISOString());
   } catch (err) {
-    console.error('[imap] Poll cycle failed:', err.message);
+    console.error(`[imap] Poll cycle failed for "${config.label}":`, err.message);
     counts.error = err.message;
   } finally {
     try {
@@ -330,13 +335,42 @@ export async function pollInbox() {
 }
 
 /**
- * Attempt a connection + read-only mailbox open with current (or provided)
- * settings. Used by POST /api/settings/test-imap. Never throws.
+ * Poll every active mailbox account in sequence. Returns aggregate counts plus
+ * a per-account breakdown. No accounts configured → { noop: true }.
+ * Pass `range` ({ fromDate, toDate }) for a manual backfill over that window.
  */
-export async function testImapConnection(overrides = {}) {
-  const config = readImapConfig(overrides);
-  if (!config) {
-    return { success: false, error: 'IMAP settings are incomplete (host, user and password are required).' };
+export async function pollAllInboxes(range = null) {
+  const configs = listActiveAccountConfigs();
+  if (configs.length === 0) {
+    return { examined: 0, matched: 0, extracted: 0, skippedDuplicates: 0, skipped: 0, noop: true };
+  }
+
+  const accounts = [];
+  for (const config of configs) {
+    accounts.push(await pollAccount(config, range));
+  }
+
+  const totals = { examined: 0, matched: 0, extracted: 0, skippedDuplicates: 0, skipped: 0 };
+  const errors = [];
+  for (const result of accounts) {
+    totals.examined += result.examined;
+    totals.matched += result.matched;
+    totals.extracted += result.extracted;
+    totals.skippedDuplicates += result.skippedDuplicates;
+    totals.skipped += result.skipped;
+    if (result.error) errors.push(`${result.account}: ${result.error}`);
+  }
+  return { ...totals, accounts, ...(errors.length ? { error: errors.join('; ') } : {}) };
+}
+
+/**
+ * Attempt a connection + read-only mailbox open with an explicit config
+ * ({ host, port, user, password, secure }). Used by the per-account test
+ * endpoint. Never throws.
+ */
+export async function testImapConnection(config) {
+  if (!config || !config.host || !config.user || !config.password) {
+    return { success: false, error: 'IMAP settings are incomplete (host, username and password are required).' };
   }
   let client;
   try {
@@ -368,8 +402,8 @@ export default {
   computeSinceDate,
   isProcessed,
   recordProcessed,
-  readImapConfig,
   pickTextPart,
-  pollInbox,
+  pollAccount,
+  pollAllInboxes,
   testImapConnection,
 };

@@ -120,3 +120,21 @@ export function clampDayToMonth(monthStr, day) {
   const clamped = Math.min(day, lastDay);
   return `${monthStr}-${String(clamped).padStart(2, '0')}`;
 }
+
+/**
+ * The Nth (1-4) or last (-1) occurrence of a weekday (0=Sun..6=Sat) in a
+ * YYYY-MM month, as YYYY-MM-DD. Pure calendar arithmetic (UTC-anchored).
+ * Nth 1-4 always exists (a month has at least 28 days), so no skip semantics.
+ */
+export function nthWeekdayOfMonth(monthStr, weekday, nth) {
+  const [year, month] = monthStr.split('-').map(Number);
+  if (nth === -1) {
+    const lastDay = daysInMonthCount(monthStr);
+    const lastDow = new Date(Date.UTC(year, month - 1, lastDay)).getUTCDay();
+    const day = lastDay - ((lastDow - weekday + 7) % 7);
+    return `${monthStr}-${String(day).padStart(2, '0')}`;
+  }
+  const firstDow = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+  const day = 1 + ((weekday - firstDow + 7) % 7) + (nth - 1) * 7;
+  return `${monthStr}-${String(day).padStart(2, '0')}`;
+}
