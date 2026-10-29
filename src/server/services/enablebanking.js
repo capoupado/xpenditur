@@ -13,8 +13,10 @@
 //
 // Synced transactions become pending_transactions — the same review pipeline
 // as file imports; the ledger is never written directly.
-// Dedup uses import_dedup under source id -1, keyed on the bank's
-// entry_reference when present (content hash + occurrence counter otherwise).
+// Dedup uses import_dedup under source id -1, keyed on the account's IBAN
+// (uid when the bank gives none) plus the bank's entry_reference when present
+// (content hash + occurrence counter otherwise). Banks may hand out new account
+// uids on reconnect, so the uid alone can't identify an account across consents.
 //
 // Test-only deviation: base URL is read from ENABLEBANKING_BASE_URL so
 // verification can point at a local mock. Production leaves it unset.
@@ -209,17 +211,25 @@ export async function completeBankAuth({ code, state }) {
   return { connectionId, accounts: accounts.length, returnUrl: reqRow.return_url || null };
 }
 
-// A reconnect (renewing an expiring consent) yields a new session with the
-// same account uids. The older connections covering those accounts are
-// dropped, and each account keeps its sync window and paused/active state.
+// A reconnect (renewing an expiring consent) yields a new session covering
+// the same accounts — usually with the same uids, but some banks (CGD) issue
+// new ones, so an account is also matched by IBAN within the same bank. The
+// older connections covering those accounts are dropped, and each account
+// keeps its sync window and paused/active state.
 export function supersedeOlderConnections(connectionId) {
   const fresh = db.prepare('SELECT * FROM bank_accounts WHERE connection_id = ?').all(connectionId);
+  const { aspsp_name: aspspName } = db.prepare('SELECT aspsp_name FROM bank_connections WHERE id = ?').get(connectionId);
   const carry = db.prepare('UPDATE bank_accounts SET active = ?, last_sync = ? WHERE id = ?');
   const older = new Set();
   for (const acc of fresh) {
     const prev = db
-      .prepare('SELECT * FROM bank_accounts WHERE uid = ? AND connection_id != ? ORDER BY id DESC')
-      .get(acc.uid, connectionId);
+      .prepare(
+        `SELECT a.* FROM bank_accounts a JOIN bank_connections c ON c.id = a.connection_id
+         WHERE a.connection_id != ?
+           AND (a.uid = ? OR (? IS NOT NULL AND a.iban = ? AND c.aspsp_name = ?))
+         ORDER BY a.id DESC`
+      )
+      .get(connectionId, acc.uid, acc.iban, acc.iban, aspspName);
     if (!prev) continue;
     carry.run(prev.active, prev.last_sync, acc.id);
     older.add(prev.connection_id);
@@ -326,6 +336,30 @@ export function normalizeTransaction(txn) {
   };
 }
 
+// The account's identity in dedup keys: its IBAN survives a reconnect, the uid
+// may not.
+function accountDedupId(account) {
+  const iban = String(account.iban || '').replace(/\s+/g, '').toUpperCase();
+  return iban || account.uid;
+}
+
+// Has this bank already delivered a row with this entry reference? Pending
+// rows are kept forever, so this catches re-deliveries whose dedup key was
+// written under an account identity that no longer exists (a uid replaced on
+// reconnect before IBAN keying, or an account without IBAN).
+function entryAlreadyPending(aspspName, row) {
+  const labelPrefix = `Bank: ${aspspName} — `;
+  return !!db
+    .prepare(
+      `SELECT 1 FROM pending_transactions
+       WHERE source_kind = 'bank-sync' AND substr(source_label, 1, length(?)) = ?
+         AND date = ? AND type = ? AND amount = ?
+         AND json_extract(raw_extracted_json, '$.entry_reference') = ?
+       LIMIT 1`
+    )
+    .get(labelPrefix, labelPrefix, row.date, row.type, row.amount, row.entryReference);
+}
+
 async function fetchAllTransactions(accountUid, dateFrom) {
   const all = [];
   let continuationKey = null;
@@ -408,16 +442,24 @@ export async function syncBankAccounts() {
         counts.skippedRows++;
         continue;
       }
-      let dedupId;
+      let suffix;
       if (row.entryReference) {
-        dedupId = `eb:${account.uid}:${row.entryReference}`;
+        suffix = row.entryReference;
       } else {
         const key = `${row.date}|${row.type}|${row.amount}|${row.currency}|${(row.description || '').toLowerCase()}`;
         const occ = (occurrences.get(key) || 0) + 1;
         occurrences.set(key, occ);
-        dedupId = `eb:${account.uid}:` + crypto.createHash('sha256').update(`${key}|${occ}`).digest('hex');
+        suffix = crypto.createHash('sha256').update(`${key}|${occ}`).digest('hex');
       }
-      if (isProcessed(BANK_SYNC_SOURCE, dedupId)) {
+      const dedupId = `eb:${accountDedupId(account)}:${suffix}`;
+      // Keys written before IBAN keying used the uid.
+      const legacyId = `eb:${account.uid}:${suffix}`;
+      if (
+        isProcessed(BANK_SYNC_SOURCE, dedupId) ||
+        isProcessed(BANK_SYNC_SOURCE, legacyId) ||
+        (row.entryReference && entryAlreadyPending(account.aspsp_name, row))
+      ) {
+        recordProcessed(BANK_SYNC_SOURCE, dedupId);
         counts.skippedDuplicates++;
         continue;
       }
