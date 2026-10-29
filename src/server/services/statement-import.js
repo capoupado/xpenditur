@@ -1,6 +1,6 @@
 // Bank statement file import (CSV / PDF) → pending_transactions.
 //
-// Imported rows enter the SAME review pipeline as email extractions: nothing
+// Imported rows enter the SAME review pipeline as bank sync: nothing
 // touches the ledger until the user approves it on the Pending page. CSV is
 // parsed deterministically (no AI): the parser auto-detects the delimiter and
 // header row and understands the Portuguese export conventions used by CGD and
@@ -11,18 +11,18 @@
 //
 // Dedup: each row gets a stable key (date|type|amount|description + an
 // occurrence counter so N identical same-day rows import as N rows) recorded
-// in processed_emails under the reserved pseudo-account id 0 — re-importing
+// in import_dedup under source id 0 — re-importing
 // the same or an overlapping export is harmless.
 
 import crypto from 'crypto';
 import db from '../db.js';
 import { isValidDateString } from '../utils/dates.js';
-import { isProcessed, recordProcessed } from './imap.js';
-import { parseExtractionResponse, toCents } from './invoice-parser.js';
+import { isProcessed, recordProcessed } from './import-dedup.js';
+import { parseExtractionResponse, toCents } from './ai-response.js';
 import { getAiConfig, callAiChat } from './ai-client.js';
 
-// processed_emails account_id used for file imports (real IMAP accounts start at 1).
-export const IMPORT_ACCOUNT_ID = 0;
+// import_dedup source id for file imports (bank sync uses -1).
+export const IMPORT_SOURCE = 0;
 
 const MAX_PDF_TEXT_CHARS = 50000;
 
@@ -352,8 +352,8 @@ export function otherCategoryId() {
 
 /**
  * Insert normalized rows ({ date, description, cents } — signed cents) as
- * pending_transactions, deduplicating via processed_emails under
- * IMPORT_ACCOUNT_ID. Identical rows WITHIN one file get distinct occurrence
+ * pending_transactions, deduplicating via import_dedup under
+ * IMPORT_SOURCE. Identical rows WITHIN one file get distinct occurrence
  * numbers (so two identical coffees on the same day both import), and because
  * occurrences are assigned in file order the same rows in an overlapping
  * export dedup correctly.
@@ -363,8 +363,8 @@ export function insertImportedRows(rows, filename) {
   const insert = db.prepare(
     `INSERT INTO pending_transactions
        (type, amount, currency, description, suggested_category_id, date,
-        source_email_subject, source_email_from, raw_extracted_json, status, account_id)
-     VALUES (?, ?, 'EUR', ?, ?, ?, ?, 'file-import', ?, 'pending', NULL)`
+        source_label, source_kind, raw_extracted_json, status)
+     VALUES (?, ?, 'EUR', ?, ?, ?, ?, 'file-import', ?, 'pending')`
   );
 
   const occurrences = new Map();
@@ -380,11 +380,11 @@ export function insertImportedRows(rows, filename) {
       occurrences.set(key, occ);
       const dedupId = 'import:' + crypto.createHash('sha256').update(`${key}|${occ}`).digest('hex');
 
-      if (isProcessed(IMPORT_ACCOUNT_ID, dedupId)) {
+      if (isProcessed(IMPORT_SOURCE, dedupId)) {
         skippedDuplicates++;
         continue;
       }
-      recordProcessed(IMPORT_ACCOUNT_ID, dedupId);
+      recordProcessed(IMPORT_SOURCE, dedupId);
       insert.run(
         type,
         amount,
@@ -438,7 +438,7 @@ export async function importStatementFile({ filename, buffer }) {
 }
 
 export default {
-  IMPORT_ACCOUNT_ID,
+  IMPORT_SOURCE,
   decodeTextBuffer,
   normalizeHeaderCell,
   detectDelimiter,

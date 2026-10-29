@@ -43,25 +43,19 @@ A template that automatically materialises Transactions on a schedule (daily / w
 A Discord notification fired when a Transaction (from any source: manual entry, recurring materialisation, or pending approval) moves a Category's monthly spend **across** the 80% or 100% threshold of its effective Budget (spend-before below, spend-after at-or-above). Alerts are stateless: dropping back below a threshold re-arms it naturally.
 
 ### Pending Transaction
-A candidate Transaction awaiting the user's ruling — AI-extracted from an email, imported from a bank statement file (CSV/PDF), or synced from a connected bank. It is **not** a Transaction and never appears in the ledger, stats, or budgets. Lifecycle: `pending` → `approved` (a real Transaction is created and linked) or `rejected`. **Rows are retained after ruling** as an audit log of the extraction pipeline; nothing is deleted on reject.
+A candidate Transaction awaiting the user's ruling — imported from a bank statement file (CSV/PDF) or synced from a connected bank. (Older rows may come from the since-removed email invoice extraction; they stay as history.) It is **not** a Transaction and never appears in the ledger, stats, or budgets. Lifecycle: `pending` → `approved` (a real Transaction is created and linked) or `rejected`. **Rows are retained after ruling** as an audit log of the extraction pipeline; nothing is deleted on reject.
 
-The extractor decides whether the email describes an Earning or a Spending (defaulting to Spending when unsure); the user can override the type at Edit & Approve.
+The type comes from the sign of the amount; the user can override it at Edit & Approve.
 
-**Always approvable by construction:** gaps are filled at extraction time — an unmatched or missing category suggestion becomes "Other", a missing date becomes the email's received date. Plain Approve (and bulk approve) therefore never fails; Edit & Approve exists to disagree with the AI, not to repair it.
+**Always approvable by construction:** gaps are filled at intake — rows start in "Other" (or an unmatched AI category suggestion falls back to it). Plain Approve (and bulk approve) therefore never fails; Edit & Approve exists to disagree with the AI, not to repair it.
 
 **Exception — future date:** a Pending Transaction whose extracted date is in the future cannot be plain-approved (the ledger's no-future-dates rule wins); the user supplies a valid date via Edit & Approve.
 
-**Exception — foreign currency:** the extractor also reports the currency. A non-EUR Pending Transaction is quarantined: plain Approve is blocked (and bulk approve skips it, reporting the skip); the user must supply the real EUR amount via Edit & Approve. The app never converts currency itself.
-
-**Read-only mailbox:** the poller never alters the mailbox (no read-marking, no flags). It searches by date window and deduplicates via its own processed-email record keyed on mailbox account + Message-ID.
-
-**Manual backfill poll:** besides the scheduled incremental poll, the user can poll an explicit from/to date window (Pending → "Poll range…") to reach months the incremental window never covered. A ranged poll never advances the incremental poll cursor, and dedup makes re-polling a covered window harmless.
+**Exception — foreign currency:** bank sync reports the currency. A non-EUR Pending Transaction is quarantined: plain Approve is blocked (and bulk approve skips it, reporting the skip); the user must supply the real EUR amount via Edit & Approve. The app never converts currency itself.
 
 **Bank sync (Enable Banking):** transactions can be pulled directly from banks through the Enable Banking PSD2 aggregator. The user registers a personal application at enablebanking.com (application ID + RSA private key, stored encrypted like other secrets) and authorizes each bank through its own consent page (~90-day PSD2 consents; the connection shows its expiry and must be re-authorized after). Only booked transactions are synced — daily at 07:30 plus on-demand — and land as Pending rows (never in the ledger directly), deduplicated by the bank's entry reference. Non-EUR rows follow the normal foreign-currency quarantine.
 
 **Statement file import:** bank statement exports (built for CGD and Novo Banco conventions, tolerant of generic layouts) can be imported on the Pending page. CSV is parsed deterministically — no AI involved; PDF text is extracted and parsed by the configured AI provider. Imported rows are always EUR, default to the "Other" category, and enter the same pending → approved/rejected lifecycle. Dedup is per row content (date + type + amount + description, with an occurrence counter so identical same-day rows survive), so re-importing the same or an overlapping export is harmless.
-
-**Multiple mailboxes:** any number of IMAP accounts can be polled (each with its own credentials, sender allow-list, poll cursor, and enable switch); one poll cycle covers every active account. Each Pending Transaction records which mailbox it came from. Deleting a mailbox keeps its Pending rows (provenance link nulled) but drops its dedup history.
 
 ### Monthly Net (shown as "Balance")
 Earnings minus Spendings **within one calendar month**. xPenditur is a pure cash-flow ledger: there is no starting balance, no carryover between months, and no notion of "current account balance". The app answers "how did this month go?", never "how much money do I have?".

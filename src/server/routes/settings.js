@@ -101,7 +101,4 @@ router.post('/ai-test', async (req, res) => {
   }
 });
 
-// IMAP connection testing moved to POST /api/imap-accounts/test (per-mailbox
-// accounts live in routes/imap-accounts.js).
-
 export default router;

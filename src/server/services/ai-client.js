@@ -1,5 +1,5 @@
-// Provider-agnostic AI chat client. Every AI feature (email invoice
-// extraction, PDF statement parsing, pending-row categorization) sends one
+// Provider-agnostic AI chat client. Every AI feature (PDF statement
+// parsing, pending-row categorization) sends one
 // system prompt + one user message and expects a JSON object back as text;
 // this module hides which provider/wire format answers it.
 //
@@ -49,7 +49,7 @@ export function getAiConfig() {
   const model = getSetting(`ai_model_${provider.id}`) || '';
   const baseUrl = trimSlash(provider.id === 'custom' ? getSetting('ai_custom_base_url') : provider.baseUrl);
   if (!model || !baseUrl || (!apiKey && !provider.keyOptional)) return null;
-  // Each caller resolves the config once per unit of work (one email, one PDF
+  // Each caller resolves the config once per unit of work (one PDF
   // import, one categorize request), so a fresh id here is a natural
   // per-conversation session for providers that want one (OpenCode Go).
   return { provider, apiKey, model, baseUrl, label: provider.label, sessionId: crypto.randomUUID() };

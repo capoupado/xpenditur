@@ -35,16 +35,14 @@
       entered manually by the operator, imported from the operator's own bank statement files, or retrieved from
       the operator's own bank accounts through the Enable Banking PSD2 interface after the operator's explicit,
       bank-side authorization.</li>
-    <li><strong>Email data</strong> — invoice and receipt emails read (read-only) from mailboxes owned and
-      configured by the operator, for the purpose of extracting transaction details.</li>
     <li><strong>Technical data</strong> — a session cookie used solely for authentication. No analytics,
       tracking, advertising or profiling of any kind takes place.</li>
   </ul>
 
   <h2>3. Where data is stored</h2>
   <p>
-    All data is stored in a local database on a server controlled by the operator. Credentials (mailbox
-    passwords, API keys, banking application keys) are encrypted at rest. No data is transmitted to third
+    All data is stored in a local database on a server controlled by the operator. Credentials (API keys,
+    banking application keys) are encrypted at rest. No data is transmitted to third
     parties, sold, or shared.
   </p>
 
@@ -56,7 +54,7 @@
       by the operator through the bank's own consent flow and can be revoked at any time.</li>
     <li><strong>AI provider</strong> — one AI service chosen by the operator in Settings (e.g. OpenCode, OpenAI,
       Anthropic, Google, DeepSeek, Mistral, Groq, xAI, OpenRouter, or a self-hosted model) receives the text of
-      invoice emails or statement documents, and pending transaction descriptions when AI categorization is
+      statement documents, and pending transaction descriptions when AI categorization is
       requested, solely to extract or categorize transaction data.</li>
   </ul>
 

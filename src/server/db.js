@@ -81,35 +81,21 @@ CREATE TABLE IF NOT EXISTS pending_transactions (
   description TEXT,
   suggested_category_id INTEGER NOT NULL REFERENCES categories(id),
   date DATE NOT NULL,
-  source_email_subject TEXT,
-  source_email_from TEXT,
-  source_email_date DATETIME,
+  source_label TEXT,
+  source_kind TEXT,
   raw_extracted_json TEXT,
   status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')),
   transaction_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL,
-  account_id INTEGER REFERENCES imap_accounts(id) ON DELETE SET NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS imap_accounts (
-  id INTEGER PRIMARY KEY,
-  label TEXT NOT NULL,
-  host TEXT NOT NULL,
-  port INTEGER NOT NULL DEFAULT 993,
-  username TEXT NOT NULL,
-  password TEXT NOT NULL,
-  tls INTEGER NOT NULL DEFAULT 1,
-  sender_allowlist TEXT NOT NULL DEFAULT '',
-  active INTEGER NOT NULL DEFAULT 1,
-  last_poll DATETIME,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS processed_emails (
-  account_id INTEGER NOT NULL DEFAULT 1,
-  message_id TEXT NOT NULL,
+-- Keys already fed into the Pending queue, per source (-1 bank sync,
+-- 0 statement file import) — see services/import-dedup.js.
+CREATE TABLE IF NOT EXISTS import_dedup (
+  source INTEGER NOT NULL,
+  dedup_key TEXT NOT NULL,
   processed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (account_id, message_id)
+  PRIMARY KEY (source, dedup_key)
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -154,26 +140,28 @@ function tableHasColumn(table, column) {
 }
 
 // Column/table upgrades for databases created by an earlier schema. Each step
-// is guarded by a pragma check so running on a fresh or already-upgraded DB is
-// a no-op. (SQLite ALTER TABLE can only ADD COLUMN; the processed_emails PK
-// change needs a rebuild.)
+// is guarded by a schema check so running on a fresh or already-upgraded DB is
+// a no-op.
 function migrateExisting() {
   if (!tableHasColumn('recurring_transactions', 'week_of_month')) {
     db.exec('ALTER TABLE recurring_transactions ADD COLUMN week_of_month INTEGER');
   }
-  if (!tableHasColumn('pending_transactions', 'account_id')) {
-    db.exec('ALTER TABLE pending_transactions ADD COLUMN account_id INTEGER REFERENCES imap_accounts(id) ON DELETE SET NULL');
+  if (tableHasColumn('pending_transactions', 'source_email_subject')) {
+    removeEmailIngestion();
   }
-  const pendingTxFk = db
-    .prepare('PRAGMA foreign_key_list(pending_transactions)')
-    .all()
-    .find((fk) => fk.from === 'transaction_id');
-  if (pendingTxFk && pendingTxFk.on_delete === 'NO ACTION') {
-    // transaction_id originally had no ON DELETE action, which blocked deleting
-    // any transaction created by approving a pending item. SQLite can't alter
-    // an existing FK, so rebuild the table with ON DELETE SET NULL. Runs after
-    // the account_id ADD COLUMN above, so that column is always present here.
+}
+
+// Email invoice ingestion (IMAP polling + AI extraction) was removed. Pending
+// rows it produced stay as audit history; the mailbox tables, their encrypted
+// credentials and the email dedup keys go. SQLite can't drop a column that
+// carries a foreign key, so pending_transactions is rebuilt without
+// account_id (→ imap_accounts), renaming the source_email_* columns that bank
+// sync and file import reuse. The old processed_emails table becomes
+// import_dedup, keeping only the bank (-1) and file-import (0) keys.
+function removeEmailIngestion() {
+  db.transaction(() => {
     db.exec(`
+      DROP TABLE IF EXISTS pending_transactions_new;
       CREATE TABLE pending_transactions_new (
         id INTEGER PRIMARY KEY,
         type TEXT NOT NULL CHECK(type IN ('earning', 'spending')),
@@ -182,43 +170,40 @@ function migrateExisting() {
         description TEXT,
         suggested_category_id INTEGER NOT NULL REFERENCES categories(id),
         date DATE NOT NULL,
-        source_email_subject TEXT,
-        source_email_from TEXT,
-        source_email_date DATETIME,
+        source_label TEXT,
+        source_kind TEXT,
         raw_extracted_json TEXT,
         status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')),
         transaction_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL,
-        account_id INTEGER REFERENCES imap_accounts(id) ON DELETE SET NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
       INSERT INTO pending_transactions_new (id, type, amount, currency, description,
-          suggested_category_id, date, source_email_subject, source_email_from,
-          source_email_date, raw_extracted_json, status, transaction_id, account_id, created_at)
+          suggested_category_id, date, source_label, source_kind, raw_extracted_json,
+          status, transaction_id, created_at)
         SELECT id, type, amount, currency, description,
-          suggested_category_id, date, source_email_subject, source_email_from,
-          source_email_date, raw_extracted_json, status, transaction_id, account_id, created_at
+          suggested_category_id, date, source_email_subject,
+          CASE WHEN source_email_from IN ('file-import', 'bank-sync') THEN source_email_from ELSE 'email' END,
+          raw_extracted_json, status, transaction_id, created_at
         FROM pending_transactions;
       DROP TABLE pending_transactions;
       ALTER TABLE pending_transactions_new RENAME TO pending_transactions;
     `);
-  }
-  if (!tableHasColumn('processed_emails', 'account_id')) {
-    // Rebuild with a composite (account_id, message_id) key. Existing rows all
-    // came from the legacy single inbox, which the settings→imap_accounts
-    // migration inserts as account id 1 — so default them to 1.
+    const hasProcessedEmails = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'processed_emails'")
+      .get();
+    if (hasProcessedEmails && tableHasColumn('processed_emails', 'account_id')) {
+      db.exec(`
+        INSERT OR IGNORE INTO import_dedup (source, dedup_key, processed_at)
+          SELECT account_id, message_id, processed_at FROM processed_emails WHERE account_id <= 0;
+      `);
+    }
     db.exec(`
-      CREATE TABLE processed_emails_new (
-        account_id INTEGER NOT NULL DEFAULT 1,
-        message_id TEXT NOT NULL,
-        processed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (account_id, message_id)
-      );
-      INSERT INTO processed_emails_new (account_id, message_id, processed_at)
-        SELECT 1, message_id, processed_at FROM processed_emails;
-      DROP TABLE processed_emails;
-      ALTER TABLE processed_emails_new RENAME TO processed_emails;
+      DROP TABLE IF EXISTS processed_emails;
+      DROP TABLE IF EXISTS imap_accounts;
+      DELETE FROM settings WHERE key LIKE 'imap%';
     `);
-  }
+  })();
+  console.log('[db] Removed email ingestion tables (pending history kept).');
 }
 
 function migrate() {

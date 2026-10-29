@@ -1,5 +1,5 @@
-// Registry of supported AI providers (invoice extraction, PDF statement
-// parsing, pending-row categorization). Pure data — imported by both
+// Registry of supported AI providers (PDF statement parsing, pending-row
+// categorization). Pure data — imported by both
 // settings-store.js (to generate per-provider settings keys) and ai-client.js
 // (to make the calls), so it must not import either.
 //

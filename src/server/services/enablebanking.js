@@ -12,8 +12,8 @@
 // live in bank_auth_requests while a flow is in flight (single-use, short TTL).
 //
 // Synced transactions become pending_transactions — the same review pipeline
-// as email extractions and file imports; the ledger is never written directly.
-// Dedup uses processed_emails under pseudo-account -1, keyed on the bank's
+// as file imports; the ledger is never written directly.
+// Dedup uses import_dedup under source id -1, keyed on the bank's
 // entry_reference when present (content hash + occurrence counter otherwise).
 //
 // Test-only deviation: base URL is read from ENABLEBANKING_BASE_URL so
@@ -24,13 +24,12 @@ import jwt from 'jsonwebtoken';
 import db from '../db.js';
 import { getSetting } from './settings-store.js';
 import { todayLocalDate, addDays, isValidDateString } from '../utils/dates.js';
-import { isProcessed, recordProcessed } from './imap.js';
-import { toCents } from './invoice-parser.js';
+import { isProcessed, recordProcessed } from './import-dedup.js';
+import { toCents } from './ai-response.js';
 import { otherCategoryId } from './statement-import.js';
 
-// processed_emails pseudo-account for bank-synced rows (file imports use 0,
-// real IMAP accounts are >= 1).
-export const BANK_SYNC_ACCOUNT_ID = -1;
+// import_dedup source id for bank-synced rows (file imports use 0).
+export const BANK_SYNC_SOURCE = -1;
 
 const MAX_CONSENT_SECONDS = 90 * 86400; // PSD2 SCA ceiling — banks may cap lower
 const FIRST_SYNC_LOOKBACK_DAYS = 89; // banks rarely serve >90 days without SCA
@@ -303,8 +302,8 @@ export async function syncBankAccounts() {
   const insert = db.prepare(
     `INSERT INTO pending_transactions
        (type, amount, currency, description, suggested_category_id, date,
-        source_email_subject, source_email_from, raw_extracted_json, status, account_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'bank-sync', ?, 'pending', NULL)`
+        source_label, source_kind, raw_extracted_json, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'bank-sync', ?, 'pending')`
   );
 
   const today = todayLocalDate();
@@ -350,11 +349,11 @@ export async function syncBankAccounts() {
         occurrences.set(key, occ);
         dedupId = `eb:${account.uid}:` + crypto.createHash('sha256').update(`${key}|${occ}`).digest('hex');
       }
-      if (isProcessed(BANK_SYNC_ACCOUNT_ID, dedupId)) {
+      if (isProcessed(BANK_SYNC_SOURCE, dedupId)) {
         counts.skippedDuplicates++;
         continue;
       }
-      recordProcessed(BANK_SYNC_ACCOUNT_ID, dedupId);
+      recordProcessed(BANK_SYNC_SOURCE, dedupId);
       insert.run(
         row.type,
         row.amount,
@@ -380,7 +379,7 @@ export async function syncBankAccounts() {
 }
 
 export default {
-  BANK_SYNC_ACCOUNT_ID,
+  BANK_SYNC_SOURCE,
   isConfigured,
   getApplication,
   listAspsps,

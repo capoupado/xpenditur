@@ -7,7 +7,6 @@ import { fileURLToPath } from 'url';
 import { initDb } from './db.js';
 import { registerCronJobs } from './cron.js';
 import { checkEncryptedSettingsDecryptable, migrateLegacyDeepseekSetting } from './services/settings-store.js';
-import { migrateLegacyImapSettings } from './services/imap-accounts.js';
 
 import authRoutes from './routes/auth.js';
 import categoriesRoutes from './routes/categories.js';
@@ -17,7 +16,6 @@ import budgetsRoutes from './routes/budgets.js';
 import recurringRoutes from './routes/recurring.js';
 import pendingRoutes from './routes/pending.js';
 import settingsRoutes from './routes/settings.js';
-import imapAccountsRoutes from './routes/imap-accounts.js';
 import importRoutes from './routes/import.js';
 import bankRoutes from './routes/bank.js';
 
@@ -31,14 +29,11 @@ if (!process.env.JWT_SECRET) {
 
 initDb();
 
-// One-time move of the legacy single-inbox imap_* settings into imap_accounts.
-migrateLegacyImapSettings();
-
 // One-time move of the legacy deepseek_api_key into the AI provider settings.
 migrateLegacyDeepseekSetting();
 
 // Surface a clear message (not an opaque crypto error) if ENCRYPTION_KEY
-// changed and stored IMAP/AI provider secrets can no longer be decrypted.
+// changed and stored AI provider / bank secrets can no longer be decrypted.
 checkEncryptedSettingsDecryptable();
 
 const app = express();
@@ -62,7 +57,6 @@ app.use('/api/budgets', budgetsRoutes);
 app.use('/api/recurring', recurringRoutes);
 app.use('/api/pending', pendingRoutes);
 app.use('/api/settings', settingsRoutes);
-app.use('/api/imap-accounts', imapAccountsRoutes);
 app.use('/api/import', importRoutes);
 app.use('/api/bank', bankRoutes);
 

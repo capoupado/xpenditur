@@ -1,12 +1,10 @@
 // Central registry + accessor for the `settings` key/value table.
 //
-// Phase 5 only needs plaintext Discord/notification settings, but Phase 6 will
-// add IMAP credentials and a DeepSeek API key — some of which must be
-// encrypted at rest (see plan.md → Security, CONTEXT.md, .env.example →
-// ENCRYPTION_KEY). To avoid a rework then, every setting is declared once in
-// SETTINGS_REGISTRY with per-key `validate` / `mask` / `encrypt` behaviour, and
-// all reads/writes go through the helpers below rather than raw SQL. Adding a
-// Phase 6 key is then just one more registry entry.
+// Some settings (AI provider keys, the Enable Banking private key) must be
+// encrypted at rest (see .env.example → ENCRYPTION_KEY). Every setting is
+// declared once in SETTINGS_REGISTRY with per-key `validate` / `mask` /
+// `encrypt` behaviour, and all reads/writes go through the helpers below
+// rather than raw SQL.
 
 import crypto from 'crypto';
 import db from '../db.js';
@@ -33,15 +31,7 @@ function validateWeekday(value) {
   return Number.isInteger(n) && n >= 0 && n <= 6;
 }
 
-// Phase 6 validators. Empty string is always accepted (it clears the value /
-// keeps a secret unset); non-empty values are checked for shape.
-function validatePollInterval(value) {
-  if (value === '') return true;
-  const n = Number(value);
-  return Number.isInteger(n) && n >= 1 && n <= 1440; // 1 min .. 1 day
-}
-
-// Free-form settings (host, username, allow-list, secrets, internal cursors)
+// Free-form settings (secrets, ids)
 // accept any string — presence/absence is the only thing that matters.
 function validateAnyString(value) {
   return typeof value === 'string';
@@ -80,18 +70,6 @@ export const SETTINGS_REGISTRY = {
     mask: false,
     encrypt: false,
     default: '1',
-  },
-  // ---- Phase 6 — Email invoice auto-tracking (IMAP + DeepSeek) ----
-  // Per-mailbox connection settings (host/user/password/tls/allowlist) moved
-  // to the imap_accounts table — see services/imap-accounts.js, including the
-  // one-time migration of the legacy imap_* settings keys. Only settings that
-  // are global across all mailboxes remain here.
-  imap_poll_interval_minutes: {
-    validate: validatePollInterval,
-    validateMessage: 'must be an integer number of minutes between 1 and 1440',
-    mask: false,
-    encrypt: false,
-    default: '15',
   },
   // ---- AI provider (see services/ai-providers.js) ----
   // The active provider is chosen here; each provider keeps its own key and
@@ -144,17 +122,6 @@ export const SETTINGS_REGISTRY = {
     default: '',
   },
 };
-
-// Exported so imap_accounts passwords (services/imap-accounts.js) share the
-// exact same at-rest encryption (and ENCRYPTION_KEY rotation behaviour) as
-// encrypted settings values.
-export function encryptValue(plain) {
-  return encrypt(plain);
-}
-
-export function decryptValue(stored) {
-  return decrypt(stored);
-}
 
 function encrypt(plain) {
   const key = crypto.createHash('sha256').update(String(process.env.ENCRYPTION_KEY || '')).digest();
@@ -294,7 +261,5 @@ export default {
   setSetting,
   getAllSettingsForDisplay,
   maskValue,
-  encryptValue,
-  decryptValue,
   checkEncryptedSettingsDecryptable,
 };

@@ -2,13 +2,12 @@
 //   - Phase 4: daily recurring-transaction processing (+ a startup run so
 //     downtime is backfilled the moment the server comes back up).
 //   - Phase 5: weekly + monthly Discord summary notifications.
-//   - Phase 6 will add IMAP polling.
+//   - Daily Enable Banking sync into the Pending queue.
 
 import cron from 'node-cron';
 import { processDueRecurring } from './services/recurring.js';
 import { sendWeeklySummary, sendMonthlySummary } from './services/notifications.js';
 import { getSettingNumber } from './services/settings-store.js';
-import { pollAllInboxes } from './services/imap.js';
 import { syncBankAccounts } from './services/enablebanking.js';
 
 const TZ = process.env.TZ || 'Europe/Lisbon';
@@ -75,34 +74,4 @@ export function registerCronJobs() {
     },
     { timezone: TZ }
   );
-
-  // IMAP invoice poll — the interval is a user-editable setting
-  // (imap_poll_interval_minutes, default 15), so we can't bake it into a cron
-  // expression. Instead a 1-minute tick re-reads the setting each time and
-  // fires a poll once at least that many minutes have elapsed since the last
-  // run. A running-flag prevents overlapping cycles if a poll runs long.
-  cron.schedule('* * * * *', () => runPollTick(), { timezone: TZ });
-}
-
-let lastPollRunMs = 0;
-let pollInFlight = false;
-
-async function runPollTick() {
-  if (pollInFlight) return;
-  const intervalMin = getSettingNumber('imap_poll_interval_minutes', 15);
-  const dueMs = Math.max(1, intervalMin) * 60 * 1000;
-  if (Date.now() - lastPollRunMs < dueMs) return;
-
-  pollInFlight = true;
-  lastPollRunMs = Date.now();
-  try {
-    const counts = await pollAllInboxes();
-    if (counts && counts.extracted > 0) {
-      console.log(`[cron] imap poll: extracted ${counts.extracted} pending transaction(s).`);
-    }
-  } catch (err) {
-    console.error('[cron] imap poll failed:', err.message);
-  } finally {
-    pollInFlight = false;
-  }
 }

@@ -25,65 +25,6 @@ function SectionCard({ title, description, children }) {
 const inputCls =
   'w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:border-lime';
 
-// Known providers: IMAP host/port suggestions + how to get an app password.
-// Gmail and Zoho both REJECT the normal account password over IMAP — an
-// app-specific password is required.
-const PROVIDERS = [
-  {
-    match: (u) => /@(gmail|googlemail)\./.test(u),
-    name: 'Gmail',
-    host: 'imap.gmail.com',
-    help: (
-      <>
-        Gmail does not accept your normal password over IMAP — you need an <strong>app password</strong>:
-        enable 2-Step Verification, then create one at{' '}
-        <a
-          href="https://myaccount.google.com/apppasswords"
-          target="_blank"
-          rel="noreferrer"
-          className="text-emerald-400 hover:underline"
-        >
-          myaccount.google.com/apppasswords
-        </a>{' '}
-        and paste the 16-character code here. Also make sure IMAP is enabled in Gmail → Settings → Forwarding
-        and POP/IMAP.
-      </>
-    ),
-  },
-  {
-    match: (u) => /@zoho/.test(u),
-    name: 'Zoho Mail',
-    host: 'imap.zoho.com',
-    help: (
-      <>
-        Zoho does not accept your normal password over IMAP — generate an <strong>app password</strong> under{' '}
-        <a
-          href="https://accounts.zoho.com/home#security"
-          target="_blank"
-          rel="noreferrer"
-          className="text-emerald-400 hover:underline"
-        >
-          Zoho Account → Security → App Passwords
-        </a>{' '}
-        and paste it here. Also enable IMAP access in Zoho Mail → Settings → Mail Accounts. EU-hosted
-        accounts use <code className="text-gray-400">imap.zoho.eu</code> instead.
-      </>
-    ),
-  },
-];
-
-function providerFor(username) {
-  const u = (username || '').toLowerCase();
-  return PROVIDERS.find((p) => p.match(u)) || null;
-}
-
-// Bank connections via Enable Banking (PSD2 aggregator). Self-contained:
-// loads its own status/connections, owns the credentials form and the
-// connect-a-bank flow (which navigates away to the bank and returns via
-// /api/bank/callback → /settings?bank=connected).
-// AI provider used for invoice extraction, PDF statement parsing and
-// categorization. Each provider keeps its own key + model server-side
-// (ai_key_<id> / ai_model_<id>), so switching back and forth loses nothing.
 function AiProviderSection() {
   const [providers, setProviders] = useState([]);
   const [settings, setSettings] = useState({});
@@ -197,7 +138,7 @@ function AiProviderSection() {
   return (
     <SectionCard
       title="AI provider"
-      description="Used to extract invoices from emails, parse PDF bank statements and suggest categories. Each provider keeps its own key and model, so you can switch freely."
+      description="Used to parse PDF bank statements and suggest categories. Each provider keeps its own key and model, so you can switch freely."
     >
       <form onSubmit={handleSave} className="space-y-4">
         <p className="text-sm text-gray-400">
@@ -207,7 +148,7 @@ function AiProviderSection() {
               {activeModel ? <> · <span className="font-mono text-gray-200">{activeModel}</span></> : ' · no model set'}
             </>
           ) : (
-            'No AI provider configured — email extraction, PDF import and AI categorization are disabled.'
+            'No AI provider configured — PDF import and AI categorization are disabled.'
           )}
         </p>
 
@@ -667,192 +608,6 @@ function BankSyncSection() {
   );
 }
 
-// Create/edit form for one IMAP mailbox account. Auto-suggests host/port for
-// known providers and shows their app-password instructions.
-function MailboxForm({ initial, onDone, onCancel }) {
-  const [label, setLabel] = useState(initial?.label || '');
-  const [host, setHost] = useState(initial?.host || '');
-  const [port, setPort] = useState(initial ? String(initial.port) : '993');
-  const [username, setUsername] = useState(initial?.username || '');
-  const [password, setPassword] = useState('');
-  const [tls, setTls] = useState(initial ? String(initial.tls !== 0) : 'true');
-  const [allowlist, setAllowlist] = useState(initial?.sender_allowlist || '');
-  const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
-
-  const provider = providerFor(username);
-
-  const handleUsernameBlur = () => {
-    // Suggest host/port (and a label) for known providers, without overwriting
-    // anything the user already typed.
-    if (provider && !host.trim()) {
-      setHost(provider.host);
-      setPort('993');
-      setTls('true');
-      if (!label.trim()) setLabel(provider.name);
-    }
-  };
-
-  const payload = () => ({
-    label: label.trim(),
-    host: host.trim(),
-    port,
-    username: username.trim(),
-    ...(password.trim() ? { password: password.trim() } : {}),
-    tls,
-    sender_allowlist: allowlist,
-  });
-
-  const handleTest = async () => {
-    setTesting(true);
-    try {
-      const res = await fetch('/api/imap-accounts/test', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...payload(), ...(initial ? { id: initial.id } : {}) }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.success) toast.success('IMAP connection OK');
-      else toast.error(data.error || 'IMAP connection failed');
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      if (initial) {
-        await api.put(`/imap-accounts/${initial.id}`, payload());
-        toast.success('Mailbox updated');
-      } else {
-        await api.post('/imap-accounts', payload());
-        toast.success('Mailbox added');
-      }
-      onDone();
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-4 border border-gray-800 rounded-lg p-4 bg-gray-950/50">
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Username (email address)</label>
-          <input
-            required
-            type="text"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            onBlur={handleUsernameBlur}
-            placeholder="you@gmail.com"
-            className={inputCls}
-          />
-        </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Label</label>
-          <input
-            required
-            type="text"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            placeholder="e.g. Gmail, Zoho"
-            className={inputCls}
-          />
-        </div>
-      </div>
-
-      {provider && <p className="text-xs text-gray-400 leading-relaxed">{provider.help}</p>}
-
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="sm:col-span-2">
-          <label className="block text-xs text-gray-500 mb-1">IMAP host</label>
-          <input
-            required
-            type="text"
-            value={host}
-            onChange={(e) => setHost(e.target.value)}
-            placeholder="imap.example.com"
-            className={inputCls}
-          />
-        </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Port</label>
-          <input type="number" value={port} onChange={(e) => setPort(e.target.value)} className={inputCls} />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Password (app password)</label>
-          <input
-            type="password"
-            required={!initial}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder={initial ? initial.password_masked || 'Leave blank to keep' : 'App password'}
-            className={inputCls}
-          />
-          {initial && <p className="text-xs text-gray-500 mt-1">Leave blank to keep the current password.</p>}
-        </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">TLS</label>
-          <select value={tls} onChange={(e) => setTls(e.target.value)} className={inputCls}>
-            <option value="true">On (implicit TLS)</option>
-            <option value="false">Off</option>
-          </select>
-        </div>
-      </div>
-
-      <div>
-        <label className="block text-xs text-gray-500 mb-1">Sender allow-list (optional)</label>
-        <textarea
-          rows={2}
-          value={allowlist}
-          onChange={(e) => setAllowlist(e.target.value)}
-          placeholder="billing@shop.com, noreply@utility.com — leave blank to accept any sender"
-          className={inputCls}
-        />
-        <p className="text-xs text-gray-500 mt-1">
-          Comma or newline separated, applies to this mailbox only. Empty means no sender filter.
-        </p>
-      </div>
-
-      <div className="flex flex-wrap gap-2 justify-end pt-1">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded-lg bg-gray-800 hover:bg-gray-700 text-sm font-medium px-4 py-2 transition-colors"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          onClick={handleTest}
-          disabled={testing}
-          className="rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-sm font-medium px-4 py-2 transition-colors"
-        >
-          {testing ? 'Testing…' : 'Test connection'}
-        </button>
-        <button
-          type="submit"
-          disabled={saving}
-          className="rounded-lg bg-lime-mid hover:bg-[#7aab5c] disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
-        >
-          {saving ? 'Saving…' : initial ? 'Save mailbox' : 'Add mailbox'}
-        </button>
-      </div>
-    </form>
-  );
-}
-
 export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -867,27 +622,15 @@ export default function Settings() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
 
-  // Phase 6 — Email invoice auto-tracking (global settings + mailbox accounts)
-  const [pollInterval, setPollInterval] = useState('15');
-  const [savingEmail, setSavingEmail] = useState(false);
-  const [accounts, setAccounts] = useState([]);
-  const [accountForm, setAccountForm] = useState(null); // null | 'new' | account object
-  const [deleteAccountTarget, setDeleteAccountTarget] = useState(null);
-  const [togglingAccountId, setTogglingAccountId] = useState(null);
-
-  const loadAccounts = () => api.get('/imap-accounts').then(setAccounts);
-
   const load = () => {
     setLoading(true);
-    return Promise.all([
-      api.get('/settings').then((data) => {
+    return api
+      .get('/settings')
+      .then((data) => {
         setWebhookMasked(data.discord_webhook_url || '');
         setThreshold(String(data.notification_budget_threshold ?? '80'));
         setWeeklyDay(String(data.weekly_summary_day ?? '1'));
-        setPollInterval(String(data.imap_poll_interval_minutes ?? '15'));
-      }),
-      loadAccounts(),
-    ])
+      })
       .catch((err) => toast.error(err.message))
       .finally(() => setLoading(false));
   };
@@ -948,45 +691,6 @@ export default function Settings() {
       toast.error(err.message);
     } finally {
       setTesting(false);
-    }
-  };
-
-  const handleSaveEmail = async (e) => {
-    e.preventDefault();
-    setSavingEmail(true);
-    try {
-      await api.put('/settings', { imap_poll_interval_minutes: pollInterval });
-      toast.success('Email settings saved');
-      await load();
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setSavingEmail(false);
-    }
-  };
-
-  const toggleAccountActive = async (account) => {
-    setTogglingAccountId(account.id);
-    try {
-      await api.put(`/imap-accounts/${account.id}`, { active: account.active ? false : true });
-      toast.success(account.active ? 'Mailbox paused' : 'Mailbox reactivated');
-      await loadAccounts();
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setTogglingAccountId(null);
-    }
-  };
-
-  const confirmDeleteAccount = async () => {
-    if (!deleteAccountTarget) return;
-    try {
-      await api.delete(`/imap-accounts/${deleteAccountTarget.id}`);
-      toast.success('Mailbox deleted');
-      setDeleteAccountTarget(null);
-      await loadAccounts();
-    } catch (err) {
-      toast.error(err.message);
     }
   };
 
@@ -1101,137 +805,6 @@ export default function Settings() {
       </SectionCard>
 
       <AiProviderSection />
-
-      <SectionCard
-        title="Email invoice auto-tracking"
-        description="Poll one or more read-only IMAP mailboxes for invoices/receipts and extract them with the AI provider above into Pending transactions. Mailboxes are never modified. Gmail and Zoho require an app password — add a mailbox below for provider-specific instructions."
-      >
-        <div className="space-y-5">
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-medium text-gray-300">Mailboxes</h3>
-              {accountForm === null && (
-                <button
-                  type="button"
-                  onClick={() => setAccountForm('new')}
-                  className="rounded-lg bg-lime-mid hover:bg-[#7aab5c] text-white text-xs font-medium px-3 py-1.5 transition-colors"
-                >
-                  + Add mailbox
-                </button>
-              )}
-            </div>
-
-            {accounts.length === 0 && accountForm === null && (
-              <p className="text-sm text-gray-500">No mailboxes configured yet.</p>
-            )}
-
-            {accounts.length > 0 && (
-              <div className="border border-gray-800 rounded-lg divide-y divide-gray-800 mb-3">
-                {accounts.map((acc) => (
-                  <div key={acc.id} className={`flex items-center gap-3 px-4 py-3 ${acc.active ? '' : 'opacity-50'}`}>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-200 truncate">{acc.label}</p>
-                      <p className="text-xs text-gray-500 truncate">
-                        {acc.username} — {acc.host}:{acc.port}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => toggleAccountActive(acc)}
-                      disabled={togglingAccountId === acc.id}
-                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 shrink-0 ${
-                        acc.active ? 'bg-emerald-600' : 'bg-gray-600'
-                      }`}
-                      aria-label={acc.active ? 'Pause mailbox' : 'Reactivate mailbox'}
-                    >
-                      <span
-                        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                          acc.active ? 'translate-x-5' : 'translate-x-1'
-                        }`}
-                      />
-                    </button>
-                    <button
-                      onClick={() => setAccountForm(acc)}
-                      className="text-emerald-400 hover:text-emerald-300 text-sm shrink-0"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => setDeleteAccountTarget(acc)}
-                      className="text-red-400 hover:text-red-300 text-sm shrink-0"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {accountForm !== null && (
-              <MailboxForm
-                initial={accountForm === 'new' ? null : accountForm}
-                onDone={async () => {
-                  setAccountForm(null);
-                  await loadAccounts();
-                }}
-                onCancel={() => setAccountForm(null)}
-              />
-            )}
-          </div>
-
-          <form onSubmit={handleSaveEmail} className="space-y-4 border-t border-gray-800 pt-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">Poll interval (minutes)</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="1440"
-                  value={pollInterval}
-                  onChange={(e) => setPollInterval(e.target.value)}
-                  className={inputCls}
-                />
-                <p className="text-xs text-gray-500 mt-1">One polling cycle covers every active mailbox.</p>
-              </div>
-            </div>
-
-            <div className="flex justify-end">
-              <button
-                type="submit"
-                disabled={savingEmail}
-                className="rounded-lg bg-lime-mid hover:bg-[#7aab5c] disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
-              >
-                {savingEmail ? 'Saving…' : 'Save'}
-              </button>
-            </div>
-          </form>
-        </div>
-      </SectionCard>
-
-      {deleteAccountTarget && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center px-4 z-50">
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 max-w-sm w-full">
-            <h2 className="font-semibold text-lg mb-2">Delete this mailbox?</h2>
-            <p className="text-sm text-gray-400 mb-4">
-              {deleteAccountTarget.label} ({deleteAccountTarget.username}). Polling stops for this mailbox;
-              already-extracted pending transactions are kept.
-            </p>
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => setDeleteAccountTarget(null)}
-                className="rounded-lg bg-gray-800 hover:bg-gray-700 text-sm font-medium px-4 py-2 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmDeleteAccount}
-                className="rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-medium px-4 py-2 transition-colors"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       <BankSyncSection />
 
