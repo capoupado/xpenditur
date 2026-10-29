@@ -39,7 +39,7 @@ function AppRoutes() {
                 <Route path="/budgets" element={<Budgets />} />
                 <Route path="/recurring" element={<Recurring />} />
                 <Route path="/pending" element={<Pending />} />
-                <Route path="/settings" element={<Settings />} />
+                <Route path="/settings/*" element={<Settings />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </Layout>

@@ -35,7 +35,7 @@ function effectiveRedirectUrl(req) {
 // required (see header comment); the state parameter authenticates the flow.
 router.get('/callback', async (req, res) => {
   const { code, state, error } = req.query;
-  let returnUrl = '/settings';
+  let returnUrl = '/settings/bank';
   try {
     if (error) throw new Error(`The bank reported: ${error}`);
     if (!code || !state) throw new Error('Missing code/state in the bank redirect.');
@@ -89,10 +89,10 @@ router.post('/connect', async (req, res) => {
   }
   // After the callback completes we send the browser back to the SPA — in dev
   // that's the Vite origin (from the Referer), in production our own host.
-  let returnUrl = '/settings';
+  let returnUrl = '/settings/bank';
   try {
     const referer = req.get('referer');
-    if (referer) returnUrl = new URL(referer).origin + '/settings';
+    if (referer) returnUrl = new URL(referer).origin + '/settings/bank';
   } catch {
     /* keep default */
   }
