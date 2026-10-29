@@ -12,6 +12,11 @@ const loginLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many login attempts. Please try again later.' },
+  // Behind Cloudflare + Apache every request arrives from 127.0.0.1, which would
+  // make this a single global bucket anyone could exhaust; key on the visitor IP
+  // Cloudflare reports instead.
+  keyGenerator: (req) => req.get('cf-connecting-ip') || req.ip,
+  validate: { xForwardedForHeader: false },
 });
 
 router.post('/login', loginLimiter, (req, res) => {
@@ -30,8 +35,7 @@ router.post('/login', loginLimiter, (req, res) => {
     return res.status(401).json({ error: 'Invalid username or password' });
   }
 
-  const token = signToken({ id: user.id, username: user.username });
-  res.cookie(COOKIE_NAME, token, cookieOptions);
+  res.cookie(COOKIE_NAME, signToken(user), cookieOptions);
   res.json({ id: user.id, username: user.username });
 });
 
@@ -64,7 +68,10 @@ router.post('/change-password', requireAuth, (req, res) => {
   }
 
   const hash = bcrypt.hashSync(newPassword, 12);
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user.id);
+  // Bumping token_version signs out every other device; this one gets a fresh cookie.
+  db.prepare('UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?').run(hash, user.id);
+  const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+  res.cookie(COOKIE_NAME, signToken(updated), cookieOptions);
   res.json({ ok: true });
 });
 

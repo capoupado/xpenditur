@@ -2,7 +2,7 @@ services:
   app:
     build: .
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"   # only Apache on this host reaches the app
     volumes:
       - ./data:/app/data    # SQLite file lives here
     env_file:

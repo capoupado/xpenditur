@@ -60,6 +60,21 @@ if (String(process.env.TRUST_PROXY).toLowerCase() === 'true') {
 app.use(express.json({ limit: '25mb' }));
 app.use(cookieParser());
 
+// Baseline security headers. No CSP: the SPA and its chart library rely on
+// inline styles, and a wrong policy breaks the UI for little gain here.
+app.use((req, res, next) => {
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'same-origin',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+  });
+  if (req.secure || req.get('x-forwarded-proto') === 'https') {
+    res.set('Strict-Transport-Security', 'max-age=15552000');
+  }
+  next();
+});
+
 app.use('/api/auth', authRoutes);
 app.use('/api/categories', categoriesRoutes);
 app.use('/api/transactions', transactionsRoutes);

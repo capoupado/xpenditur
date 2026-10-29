@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY,
   username TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
+  token_version INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -155,6 +156,9 @@ function migrateExisting() {
   if (!tableHasColumn('recurring_transactions', 'week_of_month')) {
     db.exec('ALTER TABLE recurring_transactions ADD COLUMN week_of_month INTEGER');
   }
+  if (!tableHasColumn('users', 'token_version')) {
+    db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0');
+  }
   if (tableHasColumn('pending_transactions', 'source_email_subject')) {
     removeEmailIngestion();
   }
@@ -273,7 +277,7 @@ function seedUser() {
       return;
     }
     const hash = bcrypt.hashSync(DEFAULT_PASSWORD, 12);
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, existing.id);
+    db.prepare('UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?').run(hash, existing.id);
     console.warn(
       `[db] RESET_PASSWORD=true — password for "${existing.username}" reset to DEFAULT_PASSWORD. ` +
         'IMPORTANT: set RESET_PASSWORD=false in your .env now, otherwise it will reset again on next boot.'

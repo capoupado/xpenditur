@@ -37,6 +37,12 @@ set -euo pipefail
 DIR="$1"; BRANCH="$2"; PORT="$3"; REV="$4"
 cd "$DIR"
 
+echo "--> Locking down secrets and data (owner-only)"
+umask 077
+chmod 600 .env
+chmod 700 data backups 2>/dev/null || true
+chmod 600 data/* backups/* 2>/dev/null || true
+
 echo "--> Backing up data/"
 mkdir -p backups
 tar -czf "backups/data-$(date +%Y%m%d-%H%M%S).tgz" data
