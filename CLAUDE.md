@@ -60,3 +60,9 @@ When spawning subagents (Agent/Task tool), the routing block is automatically in
 | `ctx stats` | Call the `ctx_stats` MCP tool and display the full output verbatim |
 | `ctx doctor` | Call the `ctx_doctor` MCP tool, run the returned shell command, display as checklist |
 | `ctx upgrade` | Call the `ctx_upgrade` MCP tool, run the returned shell command, display as checklist |
+
+# Deployment — MANDATORY
+
+A live instance runs on `192.168.0.23` (SSH alias in `~/.ssh/config`, app in `/opt/xpenditur`, docker compose, port 3000).
+Every time you make changes to this repo, deploy them once the work is done: commit on `main`, then run `bash scripts/deploy.sh`.
+The script pushes to origin, backs up `data/` on the server, fast-forwards, rebuilds, and health-checks. If it fails, report the output and don't hand-patch the server.
