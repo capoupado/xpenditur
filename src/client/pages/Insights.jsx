@@ -10,6 +10,7 @@ const EXAMPLE_QUESTIONS = [
   'How much did I spend on food this year vs last year?',
   'What were my 5 biggest spendings last month?',
   'Average monthly net over the last 6 months?',
+  'Everything from Uber is actually Transport',
 ];
 
 function signed(cents) {
@@ -46,6 +47,97 @@ function Pill({ children, tone = 'lime' }) {
 // Ask your ledger
 // ---------------------------------------------------------------------------
 
+// A recategorization the AI proposed. Nothing is written until Apply; after
+// applying, Undo restores each transaction's previous category.
+function ChangeProposal({ proposal, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const [applied, setApplied] = useState(null); // { updated, pendingUpdated, undo }
+  const { transactions, category } = proposal;
+
+  const apply = async () => {
+    setBusy(true);
+    try {
+      const res = await api.post('/insights/apply', {
+        changes: transactions.map((t) => ({ id: t.id, category_id: category.id })),
+      });
+      setApplied(res);
+      toast.success(
+        `${res.updated} transaction${res.updated === 1 ? '' : 's'} moved to ${category.name}` +
+          (res.pendingUpdated ? `, ${res.pendingUpdated} pending row(s) too` : '')
+      );
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const undo = async () => {
+    setBusy(true);
+    try {
+      if (applied.undo.length) await api.post('/insights/apply', { changes: applied.undo });
+      toast.success('Change undone');
+      onDone();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const notes = [
+    proposal.alreadyThere > 0 && `${proposal.alreadyThere} already in ${category.name}`,
+    proposal.typeMismatch > 0 && `${proposal.typeMismatch} skipped (wrong type for that category)`,
+  ].filter(Boolean);
+
+  return (
+    <div className="mt-4 border border-lime/30 bg-lime/[.05] p-4">
+      <div className="xp-eyebrow">Proposed change</div>
+      <p className="mt-1 text-[14px] text-cream">
+        {proposal.summary} — <b>{transactions.length}</b> transaction{transactions.length === 1 ? '' : 's'} →{' '}
+        {category.icon} {category.name}
+      </p>
+      {notes.length > 0 && <p className="mt-1 text-xs text-cream-muted">{notes.join(' · ')}</p>}
+
+      {transactions.length > 0 && (
+        <div className="mt-3 max-h-72 overflow-auto border border-cream-line">
+          <table className="w-full text-xs">
+            <tbody>
+              {transactions.map((t) => (
+                <tr key={t.id} className="border-t border-cream-hair first:border-t-0">
+                  <td className="whitespace-nowrap px-3 py-1.5 text-cream-muted">{formatDate(t.date)}</td>
+                  <td className="px-3 py-1.5 text-cream-dim">{t.description || '—'}</td>
+                  <td className="whitespace-nowrap px-3 py-1.5 text-cream-muted">{t.category_name}</td>
+                  <td className="xp-num whitespace-nowrap px-3 py-1.5 text-right text-cream-dim">
+                    {signed(t.type === 'earning' ? t.amount : -t.amount)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="mt-3 flex flex-wrap justify-end gap-2">
+        {!applied ? (
+          <>
+            <button onClick={onDone} disabled={busy} className="border border-cream-line px-3 py-1.5 text-xs font-bold text-cream-muted hover:text-cream">
+              Cancel
+            </button>
+            <button onClick={apply} disabled={busy || transactions.length === 0} className="xp-btn-primary disabled:opacity-50">
+              {busy ? 'Applying…' : `Apply to ${transactions.length}`}
+            </button>
+          </>
+        ) : (
+          <button onClick={undo} disabled={busy} className="border border-cream-line px-3 py-1.5 text-xs font-bold text-cream hover:bg-cream-film">
+            {busy ? 'Undoing…' : 'Undo'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AskPanel() {
   const [question, setQuestion] = useState('');
   const [asking, setAsking] = useState(false);
@@ -70,7 +162,7 @@ function AskPanel() {
 
   return (
     <section className="xp-panel">
-      <SectionHeader eyebrow="AI" title="Ask your ledger" />
+      <SectionHeader eyebrow="AI" title="Ask your ledger" aside={<span className="text-xs text-cream-muted">Ask questions, or fix categories: “XYZ is actually Other”</span>} />
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -104,7 +196,9 @@ function AskPanel() {
         </div>
       )}
 
-      {result && (
+      {result?.proposal && <ChangeProposal proposal={result.proposal} onDone={() => setResult(null)} />}
+
+      {result && !result.proposal && (
         <div className="mt-4">
           <p className="whitespace-pre-line text-[14px] leading-relaxed text-cream [text-wrap:pretty]">{result.answer}</p>
           {result.sql && (
