@@ -89,14 +89,14 @@ export default function Recurring() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold mb-1">Recurring</h1>
+          <h1 className="text-[clamp(22px,2.6vw,28px)] font-extrabold tracking-tighter mb-1">Recurring</h1>
           <p className="text-gray-500 text-sm">
             Templates that automatically create transactions on a schedule.
           </p>
         </div>
         <button
           onClick={openCreate}
-          className="rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium px-4 py-2 transition-colors"
+          className="rounded-lg bg-lime-mid hover:bg-[#7aab5c] text-white text-sm font-medium px-4 py-2 transition-colors"
         >
           + Add recurring
         </button>

@@ -1,46 +1,48 @@
 import React from 'react';
 import { formatCents } from '../lib/format.js';
 
-// Color coding: green (<60%), yellow (60-80%), orange (80-100%), red (>100%).
+// Color coding: lime (<60%), sand (60-80%), amber (80-100%), brick (>100%).
+// The bar carries a matching glow so status reads at a glance in the dark UI.
 function toneForPercentage(pct) {
-  if (pct > 100) return { bar: 'bg-red-500', text: 'text-red-400' };
-  if (pct >= 80) return { bar: 'bg-orange-500', text: 'text-orange-400' };
-  if (pct >= 60) return { bar: 'bg-yellow-500', text: 'text-yellow-400' };
-  return { bar: 'bg-emerald-500', text: 'text-emerald-400' };
+  if (pct > 100) return { bar: '#bc4749', text: 'text-brick-light', glow: 'rgba(188,71,73,.85)' };
+  if (pct >= 80) return { bar: '#d99a4e', text: 'text-amber', glow: 'rgba(217,154,78,.7)' };
+  if (pct >= 60) return { bar: '#cbbf9a', text: 'text-sand', glow: 'rgba(203,191,154,.55)' };
+  return { bar: '#a7c957', text: 'text-lime', glow: 'rgba(167,201,87,.7)' };
 }
 
 // A single category's budget-vs-spend bar. `status` is one row from
 // GET /api/budgets/status (category_name, budget_amount, spend, remaining, percentage, kind).
 export default function BudgetProgress({ status }) {
-  const { bar, text } = toneForPercentage(status.percentage);
+  const { bar, text, glow } = toneForPercentage(status.percentage);
   const width = Math.min(100, status.percentage);
 
   return (
     <div>
-      <div className="flex items-center justify-between text-sm mb-1">
-        <span className="flex items-center gap-1.5 text-gray-200">
-          <span>{status.category_icon}</span>
+      <div className="mb-2.5 flex items-center justify-between">
+        <span className="flex items-center gap-2 xp-eyebrow-dim">
+          <span className="text-sm">{status.category_icon}</span>
           <span>{status.category_name}</span>
           <span
-            className={`text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border ${
-              status.kind === 'month'
-                ? 'border-emerald-700 text-emerald-400'
-                : 'border-gray-700 text-gray-500'
+            className={`border px-1.5 py-0.5 text-[9px] ${
+              status.kind === 'month' ? 'border-lime-deep text-lime' : 'border-cream-line text-cream-faint'
             }`}
           >
             {status.kind === 'month' ? 'override' : 'default'}
           </span>
         </span>
-        <span className={`font-medium ${text}`}>{status.percentage}%</span>
+        <span className={`xp-num text-[10px] font-extrabold tracking-label ${text}`}>{status.percentage}%</span>
       </div>
-      <div className="w-full h-2 rounded-full bg-gray-800 overflow-hidden">
-        <div className={`h-full ${bar} transition-all`} style={{ width: `${width}%` }} />
+      <div className="h-1.5 w-full bg-cream-line">
+        <div
+          className="h-full transition-all"
+          style={{ width: `${width}%`, backgroundColor: bar, boxShadow: `0 0 14px ${glow}` }}
+        />
       </div>
-      <div className="flex items-center justify-between text-xs text-gray-500 mt-1">
+      <div className="xp-num mt-2 flex items-center justify-between text-xs font-medium text-cream-muted">
         <span>
           {formatCents(status.spend)} of {formatCents(status.budget_amount)}
         </span>
-        <span>
+        <span className={status.remaining >= 0 ? '' : 'text-brick-light'}>
           {status.remaining >= 0
             ? `${formatCents(status.remaining)} left`
             : `${formatCents(-status.remaining)} over`}

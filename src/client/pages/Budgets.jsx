@@ -127,7 +127,7 @@ export default function Budgets() {
     <div>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
         <div>
-          <h1 className="text-2xl font-bold mb-1">Budgets</h1>
+          <h1 className="text-[clamp(22px,2.6vw,28px)] font-extrabold tracking-tighter mb-1">Budgets</h1>
           <p className="text-gray-500 text-sm">
             Set a default monthly limit per category, and override it for specific months.
           </p>
@@ -245,7 +245,7 @@ export default function Budgets() {
                 autoFocus
                 value={form.amount}
                 onChange={(e) => setForm({ ...form, amount: e.target.value })}
-                className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm mb-4 focus:outline-none focus:border-lime"
                 placeholder="250.00"
               />
               <div className="flex gap-2 justify-end">
@@ -259,7 +259,7 @@ export default function Budgets() {
                 <button
                   type="submit"
                   disabled={saving}
-                  className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
+                  className="rounded-lg bg-lime-mid hover:bg-[#7aab5c] disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
                 >
                   {form.id ? 'Save changes' : 'Create budget'}
                 </button>

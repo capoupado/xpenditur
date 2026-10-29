@@ -58,6 +58,7 @@ export default function Pending() {
   const [rangeTo, setRangeTo] = useState('');
   const [rangePolling, setRangePolling] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [categorizing, setCategorizing] = useState(false);
   const fileInputRef = useRef(null);
 
   const loadCategories = () => api.get('/categories').then(setCategories);
@@ -199,6 +200,31 @@ export default function Pending() {
     });
   };
 
+  const toggleSelectAll = () => {
+    setSelected((prev) => (prev.size === rows.length ? new Set() : new Set(rows.map((r) => r.id))));
+  };
+
+  const categorize = async () => {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    setCategorizing(true);
+    try {
+      const res = await api.post('/pending/categorize', { ids });
+      if (res.noop) {
+        toast('DeepSeek is not configured — add an API key in Settings.', { icon: 'ℹ️' });
+      } else {
+        let msg = `${res.categorized} categorized`;
+        if (res.skipped && res.skipped.length) msg += `, ${res.skipped.length} skipped`;
+        toast.success(msg);
+        await load();
+      }
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setCategorizing(false);
+    }
+  };
+
   const bulk = async (action) => {
     const ids = [...selected];
     if (ids.length === 0) return;
@@ -223,7 +249,7 @@ export default function Pending() {
     <div>
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold mb-1">Pending</h1>
+          <h1 className="text-[clamp(22px,2.6vw,28px)] font-extrabold tracking-tighter mb-1">Pending</h1>
           <p className="text-gray-500 text-sm">
             AI-extracted invoices awaiting your ruling. Approving creates a real transaction.
           </p>
@@ -258,7 +284,7 @@ export default function Pending() {
           <button
             onClick={pollNow}
             disabled={polling}
-            className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
+            className="rounded-lg bg-lime-mid hover:bg-[#7aab5c] disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
           >
             {polling ? 'Polling…' : '⟳ Poll now'}
           </button>
@@ -286,8 +312,16 @@ export default function Pending() {
           <span className="text-sm text-gray-400">{selected.size} selected</span>
           <div className="flex-1" />
           <button
+            onClick={categorize}
+            disabled={categorizing}
+            title="Ask DeepSeek to pick the best category for each selected row"
+            className="rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-medium px-3 py-1.5"
+          >
+            {categorizing ? 'Categorizing…' : '✨ Auto-categorize'}
+          </button>
+          <button
             onClick={() => bulk('approve')}
-            className="rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium px-3 py-1.5"
+            className="rounded-lg bg-lime-mid hover:bg-[#7aab5c] text-white text-xs font-medium px-3 py-1.5"
           >
             Approve selected
           </button>
@@ -311,7 +345,17 @@ export default function Pending() {
           <table className="w-full text-sm">
             <thead className="bg-gray-800/50 text-gray-400">
               <tr>
-                {isPendingTab && <th className="px-3 py-2 w-8" />}
+                {isPendingTab && (
+                  <th className="px-3 py-2 w-8 text-center">
+                    <input
+                      type="checkbox"
+                      checked={rows.length > 0 && selected.size === rows.length}
+                      onChange={toggleSelectAll}
+                      title={selected.size === rows.length ? 'Deselect all' : 'Select all'}
+                      className="accent-emerald-500"
+                    />
+                  </th>
+                )}
                 <th className="text-left px-4 py-2 font-medium">Vendor / Description</th>
                 <th className="text-left px-4 py-2 font-medium">Type</th>
                 <th className="text-right px-4 py-2 font-medium">Amount</th>
@@ -413,7 +457,7 @@ export default function Pending() {
                     value={rangeFrom}
                     max={rangeTo || undefined}
                     onChange={(e) => setRangeFrom(e.target.value)}
-                    className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:border-lime"
                   />
                 </div>
                 <div>
@@ -424,7 +468,7 @@ export default function Pending() {
                     value={rangeTo}
                     min={rangeFrom || undefined}
                     onChange={(e) => setRangeTo(e.target.value)}
-                    className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:border-lime"
                   />
                 </div>
               </div>
@@ -439,7 +483,7 @@ export default function Pending() {
                 <button
                   type="submit"
                   disabled={rangePolling}
-                  className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
+                  className="rounded-lg bg-lime-mid hover:bg-[#7aab5c] disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
                 >
                   {rangePolling ? 'Polling…' : 'Poll range'}
                 </button>

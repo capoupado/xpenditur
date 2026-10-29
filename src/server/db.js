@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS pending_transactions (
   source_email_date DATETIME,
   raw_extracted_json TEXT,
   status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')),
-  transaction_id INTEGER REFERENCES transactions(id),
+  transaction_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL,
   account_id INTEGER REFERENCES imap_accounts(id) ON DELETE SET NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -163,6 +163,44 @@ function migrateExisting() {
   }
   if (!tableHasColumn('pending_transactions', 'account_id')) {
     db.exec('ALTER TABLE pending_transactions ADD COLUMN account_id INTEGER REFERENCES imap_accounts(id) ON DELETE SET NULL');
+  }
+  const pendingTxFk = db
+    .prepare('PRAGMA foreign_key_list(pending_transactions)')
+    .all()
+    .find((fk) => fk.from === 'transaction_id');
+  if (pendingTxFk && pendingTxFk.on_delete === 'NO ACTION') {
+    // transaction_id originally had no ON DELETE action, which blocked deleting
+    // any transaction created by approving a pending item. SQLite can't alter
+    // an existing FK, so rebuild the table with ON DELETE SET NULL. Runs after
+    // the account_id ADD COLUMN above, so that column is always present here.
+    db.exec(`
+      CREATE TABLE pending_transactions_new (
+        id INTEGER PRIMARY KEY,
+        type TEXT NOT NULL CHECK(type IN ('earning', 'spending')),
+        amount INTEGER NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'EUR',
+        description TEXT,
+        suggested_category_id INTEGER NOT NULL REFERENCES categories(id),
+        date DATE NOT NULL,
+        source_email_subject TEXT,
+        source_email_from TEXT,
+        source_email_date DATETIME,
+        raw_extracted_json TEXT,
+        status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')),
+        transaction_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL,
+        account_id INTEGER REFERENCES imap_accounts(id) ON DELETE SET NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO pending_transactions_new (id, type, amount, currency, description,
+          suggested_category_id, date, source_email_subject, source_email_from,
+          source_email_date, raw_extracted_json, status, transaction_id, account_id, created_at)
+        SELECT id, type, amount, currency, description,
+          suggested_category_id, date, source_email_subject, source_email_from,
+          source_email_date, raw_extracted_json, status, transaction_id, account_id, created_at
+        FROM pending_transactions;
+      DROP TABLE pending_transactions;
+      ALTER TABLE pending_transactions_new RENAME TO pending_transactions;
+    `);
   }
   if (!tableHasColumn('processed_emails', 'account_id')) {
     // Rebuild with a composite (account_id, message_id) key. Existing rows all

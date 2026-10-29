@@ -17,33 +17,42 @@ function monthLabel(monthStr) {
   });
 }
 
-// Month navigator: prev/next arrows plus the month label. `next` is disabled
-// once the current calendar month is reached — Phase 2 has no future data.
+// Month navigator: prev/next arrows plus the month label, rendered as one
+// segmented control. `next` is disabled once the current calendar month is
+// reached — there is no future data.
 export default function MonthPicker({ month, currentMonth, onChange }) {
   const atCurrent = month >= currentMonth;
 
   return (
     <div className="flex items-center gap-3">
-      <button
-        onClick={() => onChange(shiftMonth(month, -1))}
-        aria-label="Previous month"
-        className="rounded-lg bg-gray-800 hover:bg-gray-700 px-3 py-1.5 text-sm transition-colors"
-      >
-        ←
-      </button>
-      <span className="text-gray-200 font-medium min-w-[9rem] text-center">{monthLabel(month)}</span>
-      <button
-        onClick={() => !atCurrent && onChange(shiftMonth(month, 1))}
-        disabled={atCurrent}
-        aria-label="Next month"
-        className="rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed px-3 py-1.5 text-sm transition-colors"
-      >
-        →
-      </button>
+      <div className="flex items-center gap-0.5 border border-cream-line bg-cream/[.06] p-[3px] backdrop-blur-lg">
+        <button
+          onClick={() => onChange(shiftMonth(month, -1))}
+          aria-label="Previous month"
+          className="flex h-9 w-11 items-center justify-center text-[15px] text-cream-muted transition-colors hover:bg-cream-film hover:text-cream"
+        >
+          ←
+        </button>
+        <div className="min-w-[110px] px-3 text-center text-[12.5px] font-extrabold uppercase tracking-[.06em]">
+          {monthLabel(month)}
+        </div>
+        <button
+          onClick={() => !atCurrent && onChange(shiftMonth(month, 1))}
+          disabled={atCurrent}
+          aria-label="Next month"
+          className={`flex h-9 w-11 items-center justify-center text-[15px] transition-colors ${
+            atCurrent
+              ? 'cursor-not-allowed text-cream-faint opacity-40'
+              : 'bg-lime-mid text-cream shadow-[0_0_22px_rgba(106,153,78,.65)] hover:bg-[#7aab5c]'
+          }`}
+        >
+          →
+        </button>
+      </div>
       {!atCurrent && (
         <button
           onClick={() => onChange(currentMonth)}
-          className="text-xs text-emerald-400 hover:text-emerald-300 ml-1"
+          className="text-[10px] font-extrabold uppercase tracking-label text-lime hover:text-lime-50"
         >
           Today
         </button>

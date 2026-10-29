@@ -15,7 +15,7 @@ import Settings from './pages/Settings.jsx';
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
   if (loading) {
-    return <div className="flex items-center justify-center h-screen text-gray-400">Loading…</div>;
+    return <div className="flex h-screen items-center justify-center bg-ink text-sm text-cream-muted">Loading…</div>;
   }
   if (!user) return <Navigate to="/login" replace />;
   return children;
@@ -51,9 +51,21 @@ function AppRoutes() {
 export default function App() {
   return (
     <AuthProvider>
-      <Toaster position="top-right" toastOptions={{
-        style: { background: '#1f2937', color: '#f3f4f6' },
-      }} />
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          style: {
+            background: '#0b120e',
+            color: '#f2e8cf',
+            border: '1px solid rgba(242,232,207,.14)',
+            borderRadius: 0,
+            fontSize: 13,
+            fontWeight: 500,
+          },
+          success: { iconTheme: { primary: '#a7c957', secondary: '#0b120e' } },
+          error: { iconTheme: { primary: '#bc4749', secondary: '#0b120e' } },
+        }}
+      />
       <AppRoutes />
     </AuthProvider>
   );

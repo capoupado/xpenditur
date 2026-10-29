@@ -71,54 +71,61 @@ export default function CategoryBreakdownTable({ categories }) {
       isEmpty={rows.length === 0}
       emptyMessage="No transactions recorded for this month yet."
     >
-      <div className="overflow-x-auto -mx-4 sm:mx-0">
-        <table className="w-full text-sm min-w-[420px]">
-          <thead className="text-gray-400">
-            <tr>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[420px] text-[12.5px]">
+          <thead>
+            <tr className="border-b-2 border-cream/[.18]">
               {COLUMNS.map((col) => (
                 <th
                   key={col.key}
                   onClick={() => toggleSort(col.key)}
-                  className={`px-4 py-2 font-medium cursor-pointer select-none whitespace-nowrap hover:text-gray-200 ${
+                  className={`xp-eyebrow-dim cursor-pointer select-none whitespace-nowrap pb-2.5 transition-colors hover:text-cream ${
                     col.align === 'right' ? 'text-right' : 'text-left'
                   }`}
                 >
                   {col.label}
-                  {sortKey === col.key && <span className="ml-1 text-gray-500">{sortDir === 'asc' ? '▲' : '▼'}</span>}
+                  {sortKey === col.key && <span className="ml-1 text-lime">{sortDir === 'asc' ? '▲' : '▼'}</span>}
                 </th>
               ))}
             </tr>
           </thead>
-          <tbody>
+          <tbody className="xp-num font-medium">
             {sorted.map((r, i) => (
-              <tr key={r.category_id} className="border-t border-gray-800">
-                <td className="px-4 py-2">
-                  <span className="flex items-center gap-2">
+              <tr key={r.category_id} className="border-b border-cream-hair">
+                <td className="py-[11px] pr-3">
+                  <span className="flex items-center gap-2.5">
                     <span
-                      className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
+                      className="h-2.5 w-2.5 flex-none"
                       style={{ backgroundColor: colorForCategory(r, i) }}
                     />
                     {r.category_icon} {r.category_name}
                   </span>
                 </td>
-                <td className="px-4 py-2 text-right text-emerald-400">
+                <td className={`py-[11px] text-right ${r.earnings > 0 ? 'text-lime' : 'text-cream-faint'}`}>
                   {r.earnings > 0 ? formatCents(r.earnings) : '—'}
                 </td>
-                <td className="px-4 py-2 text-right text-red-400">
+                <td className={`py-[11px] text-right font-bold ${r.spending > 0 ? '' : 'text-cream-faint'}`}>
                   {r.spending > 0 ? formatCents(r.spending) : '—'}
                 </td>
-                <td className={`px-4 py-2 text-right font-medium ${r.net >= 0 ? 'text-gray-100' : 'text-red-400'}`}>
-                  {formatCents(r.net)}
+                <td className={`py-[11px] text-right font-bold ${r.net >= 0 ? 'text-lime' : 'text-brick-light'}`}>
+                  {r.net >= 0 ? '+' : '−'}
+                  {formatCents(Math.abs(r.net))}
                 </td>
               </tr>
             ))}
           </tbody>
-          <tfoot>
-            <tr className="border-t border-gray-700 font-semibold">
-              <td className="px-4 py-2">Total</td>
-              <td className="px-4 py-2 text-right text-emerald-400">{formatCents(totals.earnings)}</td>
-              <td className="px-4 py-2 text-right text-red-400">{formatCents(totals.spending)}</td>
-              <td className="px-4 py-2 text-right">{formatCents(totals.earnings - totals.spending)}</td>
+          <tfoot className="xp-num">
+            <tr className="border-t-2 border-cream/[.18] font-extrabold">
+              <td className="py-[11px] uppercase tracking-[.08em] text-[10px]">Total</td>
+              <td className="py-[11px] text-right text-lime">{formatCents(totals.earnings)}</td>
+              <td className="py-[11px] text-right">{formatCents(totals.spending)}</td>
+              <td
+                className={`py-[11px] text-right ${
+                  totals.earnings - totals.spending >= 0 ? 'text-lime' : 'text-brick-light'
+                }`}
+              >
+                {formatCents(totals.earnings - totals.spending)}
+              </td>
             </tr>
           </tfoot>
         </table>

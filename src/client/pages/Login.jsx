@@ -25,14 +25,28 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-950 text-gray-100 px-4">
-      <div className="w-full max-w-sm">
-        <h1 className="text-3xl font-bold text-center mb-1">xPenditur</h1>
-        <p className="text-center text-gray-500 mb-8">Sign in to your ledger</p>
+    <div className="relative isolate flex min-h-screen items-center justify-center overflow-hidden bg-ink px-4 text-cream">
+      {/* Same atmosphere as the app shell so the sign-in feels like the product. */}
+      <div className="pointer-events-none absolute inset-0 z-0">
+        <div className="absolute -left-[180px] -top-[240px] h-[720px] w-[720px] animate-bloom bg-[radial-gradient(circle,rgba(56,102,65,.62),rgba(56,102,65,0)_66%)] blur-[34px]" />
+        <div className="absolute -right-[200px] bottom-[-200px] h-[640px] w-[640px] animate-bloom-slow bg-[radial-gradient(circle,rgba(167,201,87,.20),rgba(167,201,87,0)_66%)] blur-[36px]" />
+        <div className="absolute inset-0 bg-gradient-to-b from-ink/30 to-ink/70" />
+      </div>
 
-        <form onSubmit={handleSubmit} className="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-4">
+      <div className="relative z-10 w-full max-w-sm">
+        <div className="mb-6 flex items-center gap-2.5">
+          <span className="h-3 w-3 bg-lime shadow-[0_0_18px_rgba(167,201,87,.85)]" />
+          <span className="text-lg font-extrabold tracking-tighter">xPenditur</span>
+        </div>
+
+        <form onSubmit={handleSubmit} className="xp-panel space-y-4">
           <div>
-            <label className="block text-sm text-gray-400 mb-1" htmlFor="username">
+            <div className="xp-eyebrow">Welcome back</div>
+            <h1 className="mt-1 text-xl font-extrabold tracking-tight">Sign in to your ledger</h1>
+          </div>
+
+          <div>
+            <label className="mb-1.5 block xp-eyebrow-dim" htmlFor="username">
               Username
             </label>
             <input
@@ -42,11 +56,11 @@ export default function Login() {
               required
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              className="xp-input"
             />
           </div>
           <div>
-            <label className="block text-sm text-gray-400 mb-1" htmlFor="password">
+            <label className="mb-1.5 block xp-eyebrow-dim" htmlFor="password">
               Password
             </label>
             <input
@@ -56,14 +70,10 @@ export default function Login() {
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              className="xp-input"
             />
           </div>
-          <button
-            type="submit"
-            disabled={submitting}
-            className="w-full rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium py-2.5 transition-colors"
-          >
+          <button type="submit" disabled={submitting} className="xp-btn-primary w-full py-2.5 disabled:opacity-50">
             {submitting ? 'Signing in…' : 'Sign in'}
           </button>
         </form>

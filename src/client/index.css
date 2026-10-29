@@ -7,5 +7,96 @@ html, body, #root {
 }
 
 body {
-  background-color: #030712;
+  background-color: #080d0a;
+  color: #f2e8cf;
+  font-family: Archivo, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer base {
+  a {
+    color: #a7c957;
+    text-decoration: none;
+  }
+  a:hover {
+    color: #e4f0c4;
+  }
+  /* Numbers are compared column-to-column all over this app. */
+  input, select, textarea, button {
+    font-family: inherit;
+  }
+}
+
+@layer components {
+  /* Frosted slab — the app's one and only surface treatment. */
+  .xp-panel {
+    @apply border border-cream-line bg-cream-film p-5 sm:p-[22px];
+    backdrop-filter: blur(24px) saturate(150%);
+    -webkit-backdrop-filter: blur(24px) saturate(150%);
+    box-shadow: inset 0 1px 0 rgba(242, 232, 207, 0.14);
+  }
+
+  /* Hairline-gap grid: children sit on a 1px cream rule, no rounded corners. */
+  .xp-slab {
+    @apply gap-px border border-cream-line bg-cream-line;
+  }
+  .xp-slab > * {
+    @apply bg-cream-film;
+    backdrop-filter: blur(26px) saturate(150%);
+    -webkit-backdrop-filter: blur(26px) saturate(150%);
+    box-shadow: inset 0 1px 0 rgba(242, 232, 207, 0.14);
+  }
+
+  /* Eyebrow label above every heading. */
+  .xp-eyebrow {
+    @apply text-[10px] font-bold uppercase tracking-label text-lime;
+  }
+  .xp-eyebrow-dim {
+    @apply text-[9.5px] font-extrabold uppercase tracking-[0.12em] text-cream-muted;
+  }
+  .xp-title {
+    @apply text-base font-extrabold tracking-tight;
+  }
+  .xp-num {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .xp-btn {
+    @apply border border-cream-line bg-cream-film px-4 py-2 text-sm font-bold text-cream transition-colors hover:bg-cream-line;
+  }
+  .xp-btn-primary {
+    @apply border-0 bg-lime-mid px-4 py-2 text-sm font-bold text-cream transition-colors hover:bg-[#7aab5c];
+    box-shadow: 0 0 22px rgba(106, 153, 78, 0.5);
+  }
+  .xp-btn-danger {
+    @apply border-0 bg-brick px-4 py-2 text-sm font-bold text-cream transition-colors hover:bg-[#d15a5c];
+  }
+
+  .xp-input {
+    @apply w-full border border-cream-line bg-cream-film px-3 py-2 text-sm text-cream outline-none transition-colors placeholder:text-cream-faint focus:border-lime;
+  }
+
+  .xp-rule {
+    @apply border-b-2 border-cream/[.18];
+  }
+}
+
+/* Pages that still use the legacy `bg-gray-900` card class inherit the frosted
+   slab treatment, so every surface in the app matches the redesigned ones. */
+.bg-gray-900 {
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  box-shadow: inset 0 1px 0 rgba(242, 232, 207, 0.14);
+}
+
+/* Native form controls need explicit dark styling once the theme goes custom. */
+select.xp-input option,
+select option {
+  background-color: #0b120e;
+  color: #f2e8cf;
+}
+
+input[type='date'],
+input[type='month'] {
+  color-scheme: dark;
 }

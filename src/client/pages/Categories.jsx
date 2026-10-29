@@ -84,7 +84,7 @@ export default function Categories() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">Categories</h1>
+      <h1 className="text-[clamp(22px,2.6vw,28px)] font-extrabold tracking-tighter mb-6">Categories</h1>
 
       <form onSubmit={handleSubmit} className="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-6 grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
         <div className="sm:col-span-2">
@@ -93,7 +93,7 @@ export default function Categories() {
             required
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
-            className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:border-lime"
             placeholder="e.g. Groceries"
           />
         </div>
@@ -102,7 +102,7 @@ export default function Categories() {
           <select
             value={form.type}
             onChange={(e) => setForm({ ...form, type: e.target.value })}
-            className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:border-lime"
           >
             {TYPES.map((t) => (
               <option key={t} value={t}>
@@ -116,7 +116,7 @@ export default function Categories() {
           <input
             value={form.icon}
             onChange={(e) => setForm({ ...form, icon: e.target.value })}
-            className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:border-lime"
             placeholder="🛒"
           />
         </div>
@@ -133,7 +133,7 @@ export default function Categories() {
           <button
             type="submit"
             disabled={saving}
-            className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
+            className="rounded-lg bg-lime-mid hover:bg-[#7aab5c] disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
           >
             {form.id ? 'Save changes' : 'Add category'}
           </button>
@@ -205,7 +205,7 @@ export default function Categories() {
             <select
               value={reassignTo}
               onChange={(e) => setReassignTo(e.target.value)}
-              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm mb-4 focus:outline-none focus:border-lime"
             >
               <option value="">No reassignment needed</option>
               {otherOptions.map((c) => (

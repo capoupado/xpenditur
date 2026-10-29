@@ -23,7 +23,7 @@ function SectionCard({ title, description, children }) {
 }
 
 const inputCls =
-  'w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500';
+  'w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:border-lime';
 
 // Known providers: IMAP host/port suggestions + how to get an app password.
 // Gmail and Zoho both REJECT the normal account password over IMAP — an
@@ -269,7 +269,7 @@ function BankSyncSection() {
             <button
               type="submit"
               disabled={saving}
-              className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
+              className="rounded-lg bg-lime-mid hover:bg-[#7aab5c] disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
             >
               {saving ? 'Saving…' : 'Save'}
             </button>
@@ -380,7 +380,7 @@ function BankSyncSection() {
                       type="button"
                       onClick={connect}
                       disabled={connecting || !selectedBank}
-                      className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
+                      className="rounded-lg bg-lime-mid hover:bg-[#7aab5c] disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
                     >
                       {connecting ? 'Redirecting…' : 'Connect →'}
                     </button>
@@ -602,7 +602,7 @@ function MailboxForm({ initial, onDone, onCancel }) {
         <button
           type="submit"
           disabled={saving}
-          className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
+          className="rounded-lg bg-lime-mid hover:bg-[#7aab5c] disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
         >
           {saving ? 'Saving…' : initial ? 'Save mailbox' : 'Add mailbox'}
         </button>
@@ -783,7 +783,7 @@ export default function Settings() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold mb-1">Settings</h1>
+        <h1 className="text-[clamp(22px,2.6vw,28px)] font-extrabold tracking-tighter mb-1">Settings</h1>
         <p className="text-gray-500 text-sm">Discord notifications and account security.</p>
       </div>
 
@@ -799,7 +799,7 @@ export default function Settings() {
               value={webhookUrl}
               onChange={(e) => setWebhookUrl(e.target.value)}
               placeholder={webhookMasked || 'https://discord.com/api/webhooks/...'}
-              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:border-lime"
             />
             <p className="text-xs text-gray-500 mt-1">
               {webhookMasked ? `Currently set: ${webhookMasked}` : 'Not configured yet.'} Leave blank to keep the
@@ -826,7 +826,7 @@ export default function Settings() {
                 max="99"
                 value={threshold}
                 onChange={(e) => setThreshold(e.target.value)}
-                className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:border-lime"
               />
               <p className="text-xs text-gray-500 mt-1">Lower budget-alert threshold. 100% always alerts too.</p>
             </div>
@@ -835,7 +835,7 @@ export default function Settings() {
               <select
                 value={weeklyDay}
                 onChange={(e) => setWeeklyDay(e.target.value)}
-                className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:border-lime"
               >
                 {WEEKDAY_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
@@ -858,7 +858,7 @@ export default function Settings() {
             <button
               type="submit"
               disabled={saving}
-              className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
+              className="rounded-lg bg-lime-mid hover:bg-[#7aab5c] disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
             >
               {saving ? 'Saving…' : 'Save'}
             </button>
@@ -878,7 +878,7 @@ export default function Settings() {
                 <button
                   type="button"
                   onClick={() => setAccountForm('new')}
-                  className="rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium px-3 py-1.5 transition-colors"
+                  className="rounded-lg bg-lime-mid hover:bg-[#7aab5c] text-white text-xs font-medium px-3 py-1.5 transition-colors"
                 >
                   + Add mailbox
                 </button>
@@ -975,7 +975,7 @@ export default function Settings() {
               <button
                 type="submit"
                 disabled={savingEmail}
-                className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
+                className="rounded-lg bg-lime-mid hover:bg-[#7aab5c] disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
               >
                 {savingEmail ? 'Saving…' : 'Save'}
               </button>
@@ -1021,7 +1021,7 @@ export default function Settings() {
               required
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
-              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:border-lime"
             />
           </div>
           <div>
@@ -1032,7 +1032,7 @@ export default function Settings() {
               minLength={8}
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:border-lime"
             />
           </div>
           <div>
@@ -1043,14 +1043,14 @@ export default function Settings() {
               minLength={8}
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              className="w-full rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:border-lime"
             />
           </div>
           <div className="flex justify-end">
             <button
               type="submit"
               disabled={changingPassword}
-              className="rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
+              className="rounded-lg bg-lime-mid hover:bg-[#7aab5c] disabled:opacity-50 text-white text-sm font-medium px-4 py-2 transition-colors"
             >
               {changingPassword ? 'Changing…' : 'Change password'}
             </button>

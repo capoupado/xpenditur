@@ -21,6 +21,13 @@ import { requireAuth } from '../middleware/auth.js';
 import { isValidDateString, isFutureDate } from '../utils/dates.js';
 import { checkBudgetAlertForTransaction } from '../services/notifications.js';
 import { pollAllInboxes } from '../services/imap.js';
+import { getSetting } from '../services/settings-store.js';
+import {
+  callDeepSeekChat,
+  parseExtractionResponse,
+  resolveCategoryId,
+  clampConfidence,
+} from '../services/invoice-parser.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -283,6 +290,113 @@ router.post('/bulk', (req, res) => {
     approved++;
   }
   res.json({ approved, skipped });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/pending/categorize — { ids: [...] }
+//
+// Re-categorizes pending rows via DeepSeek. Mainly useful for statement/file
+// imports, which all land as "Other". Updates suggested_category_id and stores
+// the model's confidence in raw_extracted_json (so the UI's confidence dot
+// reflects the categorization). Rows stay pending — the user still approves.
+// ---------------------------------------------------------------------------
+
+const CATEGORIZE_BATCH_SIZE = 40;
+
+function buildCategorizationPrompt(categoryNames) {
+  const list = (categoryNames && categoryNames.length ? categoryNames : ['Other']).join(', ');
+  return `You are a financial transaction categorizer. You will receive a JSON array of transactions.
+For each, pick the single best matching category from: [${list}].
+Respond ONLY with a JSON object, no other text:
+{"assignments": [{"id": number — the transaction's id, "category": "string — exactly one of the listed category names", "confidence": number — 0 to 1}]}`;
+}
+
+router.post('/categorize', async (req, res) => {
+  const { ids } = req.body || {};
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'ids must be a non-empty array' });
+  }
+
+  const apiKey = getSetting('deepseek_api_key');
+  if (!apiKey) return res.json({ noop: true });
+
+  const categories = db.prepare('SELECT id, name, type, is_system FROM categories').all();
+  const categoryNames = categories.map((c) => c.name);
+  const otherId = (categories.find((c) => c.is_system === 1) || categories.find((c) => c.name === 'Other'))?.id;
+
+  const skipped = [];
+  const rows = [];
+  for (const rawId of ids) {
+    const id = Number(rawId);
+    const pending = getPending(id);
+    if (!pending) {
+      skipped.push({ id, reason: 'not found' });
+      continue;
+    }
+    if (pending.status !== 'pending') {
+      skipped.push({ id, reason: `already ${pending.status}` });
+      continue;
+    }
+    rows.push(decorate(pending));
+  }
+
+  let categorized = 0;
+  const update = db.prepare(
+    "UPDATE pending_transactions SET suggested_category_id = ?, raw_extracted_json = ? WHERE id = ? AND status = 'pending'"
+  );
+
+  for (let i = 0; i < rows.length; i += CATEGORIZE_BATCH_SIZE) {
+    const batch = rows.slice(i, i + CATEGORIZE_BATCH_SIZE);
+    const userContent = JSON.stringify(
+      batch.map((r) => ({
+        id: r.id,
+        description: r.description,
+        vendor: r.vendor,
+        type: r.type,
+        amount: `${(r.amount / 100).toFixed(2)} ${r.currency}`,
+        date: r.date,
+      }))
+    );
+
+    let assignments;
+    try {
+      const content = await callDeepSeekChat({
+        systemPrompt: buildCategorizationPrompt(categoryNames),
+        userContent,
+        apiKey,
+      });
+      const parsed = parseExtractionResponse(content);
+      assignments = Array.isArray(parsed?.assignments) ? parsed.assignments : [];
+    } catch (err) {
+      console.error('[pending] categorize batch failed (non-fatal):', err.message);
+      batch.forEach((r) => skipped.push({ id: r.id, reason: `DeepSeek error: ${err.message.slice(0, 120)}` }));
+      continue;
+    }
+
+    const byId = new Map(assignments.map((a) => [Number(a.id), a]));
+    for (const row of batch) {
+      const a = byId.get(row.id);
+      if (!a || typeof a.category !== 'string') {
+        skipped.push({ id: row.id, reason: 'model returned no assignment' });
+        continue;
+      }
+      const categoryId = resolveCategoryId(a.category, row.type, categories, otherId);
+      let raw = {};
+      if (row.raw_extracted_json) {
+        try {
+          raw = JSON.parse(row.raw_extracted_json);
+        } catch {
+          /* start fresh */
+        }
+      }
+      raw.category_suggestion = a.category;
+      raw.confidence = clampConfidence(a.confidence);
+      update.run(categoryId, JSON.stringify(raw), row.id);
+      categorized++;
+    }
+  }
+
+  res.json({ categorized, skipped });
 });
 
 // ---------------------------------------------------------------------------
