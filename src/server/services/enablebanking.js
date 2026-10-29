@@ -311,7 +311,9 @@ export function normalizeTransaction(txn) {
   const cents = toCents(txn.transaction_amount?.amount);
   if (cents === null || cents === 0) return null;
 
-  const rawDate = txn.booking_date || txn.value_date || txn.transaction_date || '';
+  // The transaction date is when the money moved; banks that send it (CGD
+  // cards) may stamp booking_date with the day the row was fetched.
+  const rawDate = txn.transaction_date || txn.booking_date || txn.value_date || '';
   const date = String(rawDate).slice(0, 10);
   if (!isValidDateString(date)) return null;
 
