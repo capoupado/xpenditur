@@ -211,9 +211,10 @@ export default function Pending() {
     try {
       const res = await api.post('/pending/categorize', { ids });
       if (res.noop) {
-        toast('No AI provider configured — set one up in Settings.', { icon: 'ℹ️' });
+        toast('No AI provider configured and no matches in your history — set one up in Settings.', { icon: 'ℹ️' });
       } else {
         let msg = `${res.categorized} categorized`;
+        if (res.fromHistory) msg += ` (${res.fromHistory} from your history)`;
         if (res.skipped && res.skipped.length) msg += `, ${res.skipped.length} skipped`;
         toast.success(msg);
         await load();
@@ -314,7 +315,7 @@ export default function Pending() {
           <button
             onClick={categorize}
             disabled={categorizing}
-            title="Ask the AI provider to pick the best category for each selected row"
+            title="Reuse the category from past transactions with the same description; ask the AI provider for the rest"
             className="rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-medium px-3 py-1.5"
           >
             {categorizing ? 'Categorizing…' : '✨ Auto-categorize'}

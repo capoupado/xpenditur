@@ -22,6 +22,7 @@ import { isValidDateString, isFutureDate } from '../utils/dates.js';
 import { checkBudgetAlertForTransaction } from '../services/notifications.js';
 import { pollAllInboxes } from '../services/imap.js';
 import { getAiConfig, callAiChat } from '../services/ai-client.js';
+import { buildCategoryHistory } from '../services/category-history.js';
 import {
   parseExtractionResponse,
   resolveCategoryId,
@@ -294,10 +295,13 @@ router.post('/bulk', (req, res) => {
 // ---------------------------------------------------------------------------
 // POST /api/pending/categorize — { ids: [...] }
 //
-// Re-categorizes pending rows via the configured AI provider. Mainly useful for statement/file
-// imports, which all land as "Other". Updates suggested_category_id and stores
-// the model's confidence in raw_extracted_json (so the UI's confidence dot
-// reflects the categorization). Rows stay pending — the user still approves.
+// Re-categorizes pending rows. Mainly useful for statement/file imports, which
+// all land as "Other". Rows whose description the user has categorized before
+// reuse that category from the ledger (services/category-history.js); only
+// the rest go to the configured AI provider. Updates suggested_category_id
+// and stores the confidence + source in raw_extracted_json (so the UI's
+// confidence dot reflects the categorization). Rows stay pending — the user
+// still approves.
 // ---------------------------------------------------------------------------
 
 const CATEGORIZE_BATCH_SIZE = 40;
@@ -317,14 +321,14 @@ router.post('/categorize', async (req, res) => {
   }
 
   const ai = getAiConfig();
-  if (!ai) return res.json({ noop: true });
 
   const categories = db.prepare('SELECT id, name, type, is_system FROM categories').all();
   const categoryNames = categories.map((c) => c.name);
+  const categoryById = new Map(categories.map((c) => [c.id, c]));
   const otherId = (categories.find((c) => c.is_system === 1) || categories.find((c) => c.name === 'Other'))?.id;
 
   const skipped = [];
-  const rows = [];
+  const candidates = [];
   for (const rawId of ids) {
     const id = Number(rawId);
     const pending = getPending(id);
@@ -336,13 +340,50 @@ router.post('/categorize', async (req, res) => {
       skipped.push({ id, reason: `already ${pending.status}` });
       continue;
     }
-    rows.push(decorate(pending));
+    candidates.push(decorate(pending));
   }
 
   let categorized = 0;
+  let fromHistory = 0;
   const update = db.prepare(
     "UPDATE pending_transactions SET suggested_category_id = ?, raw_extracted_json = ? WHERE id = ? AND status = 'pending'"
   );
+  const saveSuggestion = (row, categoryId, { name, confidence, source }) => {
+    let raw = {};
+    if (row.raw_extracted_json) {
+      try {
+        raw = JSON.parse(row.raw_extracted_json);
+      } catch {
+        /* start fresh */
+      }
+    }
+    raw.category_suggestion = name;
+    raw.category_source = source;
+    raw.confidence = clampConfidence(confidence);
+    update.run(categoryId, JSON.stringify(raw), row.id);
+    categorized++;
+  };
+
+  // 1. Ledger history — free, deterministic, and knows the user's context.
+  const history = buildCategoryHistory({ ignoreCategoryIds: otherId ? [otherId] : [] });
+  const rows = [];
+  for (const row of candidates) {
+    const hit = history.suggest(row.description, row.type) || history.suggest(row.vendor, row.type);
+    const category = hit && categoryById.get(hit.categoryId);
+    if (category) {
+      saveSuggestion(row, category.id, { name: category.name, confidence: hit.confidence, source: 'history' });
+      fromHistory++;
+    } else {
+      rows.push(row);
+    }
+  }
+
+  // 2. AI for descriptions never seen before.
+  if (!ai) {
+    if (fromHistory === 0) return res.json({ noop: true });
+    rows.forEach((r) => skipped.push({ id: r.id, reason: 'no match in history and no AI provider configured' }));
+    rows.length = 0;
+  }
 
   for (let i = 0; i < rows.length; i += CATEGORIZE_BATCH_SIZE) {
     const batch = rows.slice(i, i + CATEGORIZE_BATCH_SIZE);
@@ -379,22 +420,11 @@ router.post('/categorize', async (req, res) => {
         continue;
       }
       const categoryId = resolveCategoryId(a.category, row.type, categories, otherId);
-      let raw = {};
-      if (row.raw_extracted_json) {
-        try {
-          raw = JSON.parse(row.raw_extracted_json);
-        } catch {
-          /* start fresh */
-        }
-      }
-      raw.category_suggestion = a.category;
-      raw.confidence = clampConfidence(a.confidence);
-      update.run(categoryId, JSON.stringify(raw), row.id);
-      categorized++;
+      saveSuggestion(row, categoryId, { name: a.category, confidence: a.confidence, source: 'ai' });
     }
   }
 
-  res.json({ categorized, skipped });
+  res.json({ categorized, fromHistory, skipped });
 });
 
 // ---------------------------------------------------------------------------
