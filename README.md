@@ -1,6 +1,6 @@
 # xPenditur
 
-**xPenditur** is a self-hosted, single-user personal finance tracker built for EUR cash-flow tracking. It treats money movement as a pure ledger—no account balances, no future-dated transactions—and connects to your email for invoice auto-extraction via DeepSeek AI. All data stays on your server.
+**xPenditur** is a self-hosted, single-user personal finance tracker built for EUR cash-flow tracking. It treats money movement as a pure ledger—no account balances, no future-dated transactions—and connects to your email for invoice auto-extraction via the AI provider of your choice. All data stays on your server.
 
 ## Features
 
@@ -9,8 +9,8 @@
 - **Charts Dashboard** — spending by category, earnings vs. spending trends (last 6 months), daily breakdown, category tables
 - **Recurring Transactions** — daily/weekly/monthly/yearly with backfill on downtime (no missed occurrences)
 - **Discord Notifications** — threshold-crossing budget alerts (80% and 100%), weekly summaries (Monday), monthly recaps (1st of month)
-- **Email Invoice Extraction** — IMAP polling with DeepSeek AI parsing; human review queue for pending transactions (with EUR-amount enforcement on non-EUR invoices); manual date-range backfill polling for older months
-- **Bank Statement Import** — upload CSV (parsed deterministically; CGD/Novo Banco export conventions supported) or PDF (parsed via DeepSeek) statements into the review queue
+- **Email Invoice Extraction** — IMAP polling with AI parsing (OpenCode, OpenAI, Anthropic, Gemini, DeepSeek, Mistral, Groq, xAI, OpenRouter, or any OpenAI-compatible server); human review queue for pending transactions (with EUR-amount enforcement on non-EUR invoices); manual date-range backfill polling for older months
+- **Bank Statement Import** — upload CSV (parsed deterministically; CGD/Novo Banco export conventions supported) or PDF (parsed via the AI provider) statements into the review queue
 - **Bank Sync (Enable Banking)** — pull transactions directly from your banks via the Enable Banking PSD2 aggregator; daily + on-demand sync into the review queue; the app serves its own `/privacy` and `/terms` pages required for an Enable Banking production application
 
 ## Quick Start
@@ -31,7 +31,7 @@
    - `DEFAULT_USERNAME` / `DEFAULT_PASSWORD` — first-run only; used only if no user exists
    - `RESET_PASSWORD=true` — emergency lockout escape hatch; resets password to DEFAULT_PASSWORD on next boot (unset afterwards)
    - `JWT_SECRET` — random string for session signing (rotating it just logs you out)
-   - `ENCRYPTION_KEY` — random string for encrypting IMAP/DeepSeek secrets at rest (rotating requires re-entering them in Settings)
+   - `ENCRYPTION_KEY` — random string for encrypting IMAP/AI provider secrets at rest (rotating requires re-entering them in Settings)
    - `TZ` — app timezone (default: `Europe/Lisbon`); all dates and cron jobs use this single clock
    - `PORT` — listen port (default: 3000)
 
@@ -72,7 +72,7 @@ All settings beyond environment variables are managed in the **Settings UI** (ac
 - **Budget Alert Threshold** — percentage at which alerts fire (default: 80%)
 - **Weekly Summary Day** — day of week for recurring summary (default: Monday)
 - **IMAP mailboxes** — any number of accounts, each with host, port, username, password, TLS toggle, per-mailbox sender allow-list, and an enable/disable switch; poll interval is global. Gmail and Zoho require an **app password** (their normal account password is rejected over IMAP) — the add-mailbox form shows provider-specific instructions
-- **DeepSeek API Key** — for invoice extraction
+- **AI provider** — provider, API key and model (the model list is fetched live from the provider) for invoice extraction, PDF statement parsing and AI categorization. Each provider keeps its own key and model, so you can switch back and forth
 - **Enable Banking** — application ID, RSA private key, and redirect URL for direct bank sync (see below)
 - Encrypted secrets use `ENCRYPTION_KEY`; changing it requires re-entering credentials.
 
@@ -81,7 +81,7 @@ All settings beyond environment variables are managed in the **Settings UI** (ac
 The app is stateless apart from two things: the **`data/` directory** (SQLite database) and the **`.env` secrets**. Moving machines is a copy of both.
 
 1. **Stop the app on the old machine** (so the SQLite WAL is quiescent), then copy the entire `data/` directory (including any `-wal`/`-shm` files) to the VPS.
-2. **Copy `.env` values — `ENCRYPTION_KEY` must be byte-identical.** Every secret stored in the DB (IMAP passwords, DeepSeek key, Enable Banking private key) is encrypted with it; a different key makes them unrecoverable and you'd re-enter them in Settings. `JWT_SECRET` may change (it only logs you out). Review `TZ`, `PORT`, `NODE_ENV=production`.
+2. **Copy `.env` values — `ENCRYPTION_KEY` must be byte-identical.** Every secret stored in the DB (IMAP passwords, AI provider keys, Enable Banking private key) is encrypted with it; a different key makes them unrecoverable and you'd re-enter them in Settings. `JWT_SECRET` may change (it only logs you out). Review `TZ`, `PORT`, `NODE_ENV=production`.
 3. **Reverse proxy** — terminate TLS at Caddy/Nginx/Traefik for your domain and proxy to the app port. Set `TRUST_PROXY=true` so the app sees `https` and real client IPs (login rate limiting, bank-callback URL derivation).
 4. **Run it** — `docker compose up -d`, or `npm run build && npm start`.
 5. **Enable Banking (first setup or after moving)** — production applications require HTTPS URLs, which is why this lives on the VPS rather than localhost:

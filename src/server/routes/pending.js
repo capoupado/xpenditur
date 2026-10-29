@@ -21,9 +21,8 @@ import { requireAuth } from '../middleware/auth.js';
 import { isValidDateString, isFutureDate } from '../utils/dates.js';
 import { checkBudgetAlertForTransaction } from '../services/notifications.js';
 import { pollAllInboxes } from '../services/imap.js';
-import { getSetting } from '../services/settings-store.js';
+import { getAiConfig, callAiChat } from '../services/ai-client.js';
 import {
-  callDeepSeekChat,
   parseExtractionResponse,
   resolveCategoryId,
   clampConfidence,
@@ -295,7 +294,7 @@ router.post('/bulk', (req, res) => {
 // ---------------------------------------------------------------------------
 // POST /api/pending/categorize — { ids: [...] }
 //
-// Re-categorizes pending rows via DeepSeek. Mainly useful for statement/file
+// Re-categorizes pending rows via the configured AI provider. Mainly useful for statement/file
 // imports, which all land as "Other". Updates suggested_category_id and stores
 // the model's confidence in raw_extracted_json (so the UI's confidence dot
 // reflects the categorization). Rows stay pending — the user still approves.
@@ -317,8 +316,8 @@ router.post('/categorize', async (req, res) => {
     return res.status(400).json({ error: 'ids must be a non-empty array' });
   }
 
-  const apiKey = getSetting('deepseek_api_key');
-  if (!apiKey) return res.json({ noop: true });
+  const ai = getAiConfig();
+  if (!ai) return res.json({ noop: true });
 
   const categories = db.prepare('SELECT id, name, type, is_system FROM categories').all();
   const categoryNames = categories.map((c) => c.name);
@@ -360,16 +359,15 @@ router.post('/categorize', async (req, res) => {
 
     let assignments;
     try {
-      const content = await callDeepSeekChat({
+      const content = await callAiChat(ai, {
         systemPrompt: buildCategorizationPrompt(categoryNames),
         userContent,
-        apiKey,
       });
       const parsed = parseExtractionResponse(content);
       assignments = Array.isArray(parsed?.assignments) ? parsed.assignments : [];
     } catch (err) {
       console.error('[pending] categorize batch failed (non-fatal):', err.message);
-      batch.forEach((r) => skipped.push({ id: r.id, reason: `DeepSeek error: ${err.message.slice(0, 120)}` }));
+      batch.forEach((r) => skipped.push({ id: r.id, reason: `${ai.label} error: ${err.message.slice(0, 120)}` }));
       continue;
     }
 

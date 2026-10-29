@@ -299,7 +299,7 @@ export async function pollAccount(config, range = null) {
       const bodyText = await fetchBodyText(client, uid);
       if (!bodyText) {
         // An empty prompt only produces hallucinated extractions — don't call
-        // DeepSeek at all.
+        // the AI provider at all.
         console.error(`[imap] Empty body for "${message.subject}" — skipping extraction.`);
         counts.skipped++;
         continue;

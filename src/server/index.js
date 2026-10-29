@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 
 import { initDb } from './db.js';
 import { registerCronJobs } from './cron.js';
-import { checkEncryptedSettingsDecryptable } from './services/settings-store.js';
+import { checkEncryptedSettingsDecryptable, migrateLegacyDeepseekSetting } from './services/settings-store.js';
 import { migrateLegacyImapSettings } from './services/imap-accounts.js';
 
 import authRoutes from './routes/auth.js';
@@ -34,8 +34,11 @@ initDb();
 // One-time move of the legacy single-inbox imap_* settings into imap_accounts.
 migrateLegacyImapSettings();
 
+// One-time move of the legacy deepseek_api_key into the AI provider settings.
+migrateLegacyDeepseekSetting();
+
 // Surface a clear message (not an opaque crypto error) if ENCRYPTION_KEY
-// changed and stored IMAP/DeepSeek secrets can no longer be decrypted.
+// changed and stored IMAP/AI provider secrets can no longer be decrypted.
 checkEncryptedSettingsDecryptable();
 
 const app = express();

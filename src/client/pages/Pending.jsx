@@ -211,7 +211,7 @@ export default function Pending() {
     try {
       const res = await api.post('/pending/categorize', { ids });
       if (res.noop) {
-        toast('DeepSeek is not configured — add an API key in Settings.', { icon: 'ℹ️' });
+        toast('No AI provider configured — set one up in Settings.', { icon: 'ℹ️' });
       } else {
         let msg = `${res.categorized} categorized`;
         if (res.skipped && res.skipped.length) msg += `, ${res.skipped.length} skipped`;
@@ -314,7 +314,7 @@ export default function Pending() {
           <button
             onClick={categorize}
             disabled={categorizing}
-            title="Ask DeepSeek to pick the best category for each selected row"
+            title="Ask the AI provider to pick the best category for each selected row"
             className="rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-medium px-3 py-1.5"
           >
             {categorizing ? 'Categorizing…' : '✨ Auto-categorize'}
@@ -338,7 +338,7 @@ export default function Pending() {
         <p className="text-gray-500">Loading…</p>
       ) : rows.length === 0 ? (
         <p className="text-gray-500">
-          {isPendingTab ? 'No pending invoices. Configure IMAP + DeepSeek in Settings, then Poll now.' : 'Nothing here.'}
+          {isPendingTab ? 'No pending invoices. Configure IMAP + an AI provider in Settings, then Poll now.' : 'Nothing here.'}
         </p>
       ) : (
         <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-x-auto">

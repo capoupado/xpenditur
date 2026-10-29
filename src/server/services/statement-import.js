@@ -7,7 +7,7 @@
 // Novo Banco (DD-MM-YYYY dates, comma decimals, separate Débito/Crédito
 // columns) as well as generic single-amount-column layouts. PDF statements
 // have no stable machine-readable structure, so their extracted text is handed
-// to DeepSeek with a batch prompt (requires the configured API key).
+// to the configured AI provider with a batch prompt.
 //
 // Dedup: each row gets a stable key (date|type|amount|description + an
 // occurrence counter so N identical same-day rows import as N rows) recorded
@@ -16,10 +16,10 @@
 
 import crypto from 'crypto';
 import db from '../db.js';
-import { getSetting } from './settings-store.js';
 import { isValidDateString } from '../utils/dates.js';
 import { isProcessed, recordProcessed } from './imap.js';
-import { callDeepSeekChat, parseExtractionResponse, toCents } from './invoice-parser.js';
+import { parseExtractionResponse, toCents } from './invoice-parser.js';
+import { getAiConfig, callAiChat } from './ai-client.js';
 
 // processed_emails account_id used for file imports (real IMAP accounts start at 1).
 export const IMPORT_ACCOUNT_ID = 0;
@@ -259,7 +259,7 @@ export function parseCsvStatement(text) {
 }
 
 // ---------------------------------------------------------------------------
-// PDF → text → DeepSeek batch extraction
+// PDF → text → AI batch extraction
 // ---------------------------------------------------------------------------
 
 const PDF_SYSTEM_PROMPT = `You are a bank statement parser. Extract EVERY transaction from the bank statement text the user provides. Statements are typically from Portuguese banks (CGD, Novo Banco): dates may appear as DD-MM-YYYY or DD/MM/YYYY and amounts use comma decimals (1.234,56).
@@ -289,9 +289,9 @@ async function extractPdfText(buffer) {
 }
 
 async function parsePdfStatement(buffer) {
-  const apiKey = getSetting('deepseek_api_key');
-  if (!apiKey) {
-    throw importError('PDF import needs the DeepSeek API key (Settings → Email invoice auto-tracking) — PDFs are parsed by AI. CSV import works without it.');
+  const ai = getAiConfig();
+  if (!ai) {
+    throw importError('PDF import needs an AI provider (Settings → AI provider) — PDFs are parsed by AI. CSV import works without it.');
   }
 
   let text;
@@ -305,16 +305,16 @@ async function parsePdfStatement(buffer) {
 
   let content;
   try {
-    content = await callDeepSeekChat({ systemPrompt: PDF_SYSTEM_PROMPT, userContent: text, apiKey });
+    content = await callAiChat(ai, { systemPrompt: PDF_SYSTEM_PROMPT, userContent: text });
   } catch (err) {
-    throw importError(`DeepSeek call failed: ${err.message}`, 502);
+    throw importError(`${ai.label} call failed: ${err.message}`, 502);
   }
 
   let extracted;
   try {
     extracted = parseExtractionResponse(content);
   } catch {
-    throw importError('DeepSeek returned an unparseable response for this PDF.', 502);
+    throw importError(`${ai.label} returned an unparseable response for this PDF.`, 502);
   }
 
   const list = Array.isArray(extracted?.transactions) ? extracted.transactions : [];

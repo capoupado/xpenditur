@@ -10,6 +10,7 @@
 
 import crypto from 'crypto';
 import db from '../db.js';
+import { AI_PROVIDER_IDS } from './ai-providers.js';
 
 const DISCORD_WEBHOOK_RE = /^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/.+/;
 
@@ -57,7 +58,7 @@ export function maskValue(value, visible = 8) {
 // Registry of every known settings key. `validate(value)` runs on PUT (value
 // is always a string or '' at this point); `mask` controls whether GET
 // returns a masked preview instead of the raw value; `encrypt` marks values
-// that must be AES-encrypted at rest using ENCRYPTION_KEY (deepseek_api_key).
+// that must be AES-encrypted at rest using ENCRYPTION_KEY (ai_key_<provider>).
 export const SETTINGS_REGISTRY = {
   discord_webhook_url: {
     validate: validateDiscordWebhook,
@@ -92,13 +93,30 @@ export const SETTINGS_REGISTRY = {
     encrypt: false,
     default: '15',
   },
-  deepseek_api_key: {
-    validate: validateAnyString,
-    validateMessage: 'must be a string',
-    mask: true,
-    encrypt: true,
+  // ---- AI provider (see services/ai-providers.js) ----
+  // The active provider is chosen here; each provider keeps its own key and
+  // model (generated ai_key_<id> / ai_model_<id> entries below), so switching
+  // back and forth doesn't require re-entering anything.
+  ai_provider: {
+    validate: (v) => v === '' || AI_PROVIDER_IDS.includes(v),
+    validateMessage: `must be one of: ${AI_PROVIDER_IDS.join(', ')}`,
+    mask: false,
+    encrypt: false,
     default: '',
   },
+  ai_custom_base_url: {
+    validate: (v) => v === '' || /^https?:\/\/.+/.test(v),
+    validateMessage: 'must be an http(s) URL (e.g. http://localhost:11434/v1), or empty to clear',
+    mask: false,
+    encrypt: false,
+    default: '',
+  },
+  ...Object.fromEntries(
+    AI_PROVIDER_IDS.flatMap((id) => [
+      [`ai_key_${id}`, { validate: validateAnyString, validateMessage: 'must be a string', mask: true, encrypt: true, default: '' }],
+      [`ai_model_${id}`, { validate: validateAnyString, validateMessage: 'must be a string', mask: false, encrypt: false, default: '' }],
+    ])
+  ),
   // ---- Bank sync (Enable Banking PSD2 aggregator) ----
   // Credentials come from a registered application at enablebanking.com:
   // the application ID becomes the JWT `kid`, the RSA private key signs it.
@@ -246,8 +264,30 @@ export function checkEncryptedSettingsDecryptable() {
   }
 }
 
+/**
+ * One-time startup migration from the single-provider era: a stored
+ * deepseek_api_key becomes the DeepSeek provider's key (same ciphertext — the
+ * encryption is identical), and DeepSeek becomes the active provider with the
+ * model that was previously hardcoded. Idempotent.
+ */
+export function migrateLegacyDeepseekSetting() {
+  const legacy = db.prepare("SELECT value FROM settings WHERE key = 'deepseek_api_key'").get();
+  if (!legacy) return;
+  const upsertIfMissing = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
+  db.transaction(() => {
+    if (legacy.value) {
+      upsertIfMissing.run('ai_key_deepseek', legacy.value);
+      upsertIfMissing.run('ai_model_deepseek', 'deepseek-chat');
+      upsertIfMissing.run('ai_provider', 'deepseek');
+    }
+    db.prepare("DELETE FROM settings WHERE key = 'deepseek_api_key'").run();
+  })();
+  if (legacy.value) console.log('[settings] Migrated DeepSeek API key to the AI provider settings.');
+}
+
 export default {
   SETTINGS_REGISTRY,
+  migrateLegacyDeepseekSetting,
   getSetting,
   getSettingNumber,
   setSetting,

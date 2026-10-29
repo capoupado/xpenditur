@@ -1,29 +1,20 @@
-// Phase 6 — DeepSeek API integration for invoice/email parsing.
+// Phase 6 — AI invoice/email parsing.
 //
 // The mailbox poller (services/imap.js) hands us an email's plain-text body;
-// this module asks DeepSeek to extract a structured transaction, applies the
-// spec's gap-filling defaults so every produced row is "approvable by
-// construction", and inserts a `pending_transactions` row.
+// this module asks the configured AI provider (services/ai-client.js) to
+// extract a structured transaction, applies the spec's gap-filling defaults so
+// every produced row is "approvable by construction", and inserts a
+// `pending_transactions` row.
 //
-// Design: the network call is isolated in `callDeepSeek`; everything around it
-// (prompt building, response parsing, gap-filling, category resolution, cents
-// conversion) is a set of pure functions so they can be unit-tested against a
-// mock server / synthetic responses without touching a real DeepSeek endpoint.
-//
-// Test-only deviation: the base URL is read from DEEPSEEK_BASE_URL (default
-// https://api.deepseek.com) so verification can point it at a local mock HTTP
-// server. Production leaves it unset and hits the real API.
+// Design: the network call is isolated in `callInvoiceExtraction`; everything
+// around it (prompt building, response parsing, gap-filling, category
+// resolution, cents conversion) is a set of pure functions so they can be
+// unit-tested against synthetic responses. To test against a local mock
+// server, select the "Custom (OpenAI-compatible)" provider in Settings.
 
 import db from '../db.js';
-import { getSetting } from './settings-store.js';
 import { isValidDateString } from '../utils/dates.js';
-
-const DEEPSEEK_MODEL = 'deepseek-chat';
-
-function baseUrl() {
-  const raw = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
-  return raw.replace(/\/+$/, '');
-}
+import { getAiConfig, callAiChat } from './ai-client.js';
 
 // ---------------------------------------------------------------------------
 // Prompt (verbatim from plan.md, with the user's category names injected)
@@ -83,7 +74,7 @@ function firstJsonObject(text) {
 }
 
 /**
- * Parse DeepSeek's assistant content into an object. Tolerates code fences and
+ * Parse the model's assistant content into an object. Tolerates code fences and
  * surrounding prose. Throws if no JSON object can be recovered.
  */
 export function parseExtractionResponse(content) {
@@ -95,7 +86,7 @@ export function parseExtractionResponse(content) {
     if (candidate) {
       return JSON.parse(candidate); // may still throw → caller treats as unparseable
     }
-    throw new Error('No JSON object found in DeepSeek response');
+    throw new Error('No JSON object found in AI response');
   }
 }
 
@@ -184,51 +175,14 @@ export function buildPendingRow(extracted, { categories, otherId, emailReceivedD
 // ---------------------------------------------------------------------------
 
 /**
- * Generic call to DeepSeek's OpenAI-compatible chat completions endpoint with
- * an arbitrary system prompt. Returns the raw assistant message content (a
- * string). Throws on transport/HTTP errors. Shared by the email invoice
- * extractor below and the PDF statement importer (statement-import.js).
+ * Calls the configured AI provider with the invoice-extraction prompt and
+ * returns the raw assistant message content (a string). Throws on
+ * transport/HTTP errors.
  */
-export async function callDeepSeekChat({ systemPrompt, userContent, apiKey }) {
-  const res = await fetch(`${baseUrl()}/v1/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: DEEPSEEK_MODEL,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userContent },
-      ],
-      temperature: 0,
-      response_format: { type: 'json_object' },
-    }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`DeepSeek responded ${res.status}${text ? `: ${text.slice(0, 300)}` : ''}`);
-  }
-
-  const json = await res.json();
-  const content = json?.choices?.[0]?.message?.content;
-  if (typeof content !== 'string') {
-    throw new Error('DeepSeek response had no message content');
-  }
-  return content;
-}
-
-/**
- * Calls DeepSeek with the invoice-extraction prompt and returns the raw
- * assistant message content (a string). Throws on transport/HTTP errors.
- */
-export async function callDeepSeek({ bodyText, categoryNames, apiKey }) {
-  return callDeepSeekChat({
+export async function callInvoiceExtraction({ bodyText, categoryNames, ai }) {
+  return callAiChat(ai, {
     systemPrompt: buildSystemPrompt(categoryNames),
     userContent: bodyText,
-    apiKey,
   });
 }
 
@@ -254,7 +208,7 @@ function otherCategoryId(categories) {
  * Never throws — returns a small result object describing the outcome:
  *   { inserted: true, pendingId, row }             extraction succeeded
  *   { inserted: false, reason: 'empty-body' }       no body text to extract from
- *   { inserted: false, reason: 'no-api-key' }       DeepSeek not configured
+ *   { inserted: false, reason: 'no-api-key' }       AI provider not configured
  *   { inserted: false, reason: 'api-error', error } transport/HTTP failure
  *   { inserted: false, reason: 'unparseable' }      response wasn't usable JSON
  *   { inserted: false, reason: 'model-error' }      model returned {"error":...}
@@ -265,8 +219,8 @@ export async function extractAndInsertPending(email) {
     return { inserted: false, reason: 'empty-body' };
   }
 
-  const apiKey = getSetting('deepseek_api_key');
-  if (!apiKey) return { inserted: false, reason: 'no-api-key' };
+  const ai = getAiConfig();
+  if (!ai) return { inserted: false, reason: 'no-api-key' };
 
   const categories = loadCategories();
   const otherId = otherCategoryId(categories);
@@ -274,13 +228,13 @@ export async function extractAndInsertPending(email) {
 
   let content;
   try {
-    content = await callDeepSeek({
+    content = await callInvoiceExtraction({
       bodyText: email.bodyText,
       categoryNames,
-      apiKey,
+      ai,
     });
   } catch (err) {
-    console.error('[invoice-parser] DeepSeek call failed (non-fatal):', err.message);
+    console.error(`[invoice-parser] ${ai.label} call failed (non-fatal):`, err.message);
     return { inserted: false, reason: 'api-error', error: err.message };
   }
 
@@ -288,7 +242,7 @@ export async function extractAndInsertPending(email) {
   try {
     extracted = parseExtractionResponse(content);
   } catch (err) {
-    console.error('[invoice-parser] Could not parse DeepSeek response (non-fatal):', err.message);
+    console.error(`[invoice-parser] Could not parse ${ai.label} response (non-fatal):`, err.message);
     return { inserted: false, reason: 'unparseable' };
   }
 
@@ -342,7 +296,6 @@ export default {
   clampConfidence,
   resolveCategoryId,
   buildPendingRow,
-  callDeepSeekChat,
-  callDeepSeek,
+  callInvoiceExtraction,
   extractAndInsertPending,
 };
