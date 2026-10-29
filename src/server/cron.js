@@ -4,11 +4,17 @@
 //   - Phase 5: weekly + monthly Discord summary notifications.
 //   - Daily Enable Banking sync into the Pending queue.
 //   - Daily bank-consent expiry warnings.
+//   - Pending-transaction reminders at the configured hours.
 
 import cron from 'node-cron';
 import { processDueRecurring } from './services/recurring.js';
-import { sendWeeklySummary, sendMonthlySummary, sendBankExpiryWarning } from './services/notifications.js';
-import { getSettingNumber } from './services/settings-store.js';
+import {
+  sendWeeklySummary,
+  sendMonthlySummary,
+  sendBankExpiryWarning,
+  sendPendingReminder,
+} from './services/notifications.js';
+import { getSetting, getSettingNumber } from './services/settings-store.js';
 import { syncBankAccounts, connectionExpiries } from './services/enablebanking.js';
 import { reviewNewPending } from './services/pending-review.js';
 
@@ -60,6 +66,18 @@ export function registerCronJobs() {
   // month that just ended (sendMonthlySummary computes "previous month"
   // relative to whenever it's called).
   cron.schedule('0 9 1 * *', () => sendMonthlySummary(), { timezone: TZ });
+
+  // Pending reminder — top of every hour; fires at the hours listed in the
+  // pending_reminder_hours setting (re-read each tick, user-editable).
+  cron.schedule(
+    '0 * * * *',
+    () => {
+      const hour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', hourCycle: 'h23' }).format(new Date()));
+      const hours = String(getSetting('pending_reminder_hours') || '').split(',').filter(Boolean).map(Number);
+      if (hours.includes(hour)) sendPendingReminder();
+    },
+    { timezone: TZ }
+  );
 
   // Bank consent expiry — 09:00 daily, warns on the BANK_EXPIRY_NOTICE_DAYS.
   cron.schedule(

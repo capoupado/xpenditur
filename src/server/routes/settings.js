@@ -1,6 +1,11 @@
 import express from 'express';
 import { requireAuth } from '../middleware/auth.js';
-import { SETTINGS_REGISTRY, getAllSettingsForDisplay, setSetting } from '../services/settings-store.js';
+import {
+  SETTINGS_REGISTRY,
+  NOTIFICATION_TYPES,
+  getAllSettingsForDisplay,
+  setSetting,
+} from '../services/settings-store.js';
 import { sendTestNotification } from '../services/notifications.js';
 import { AI_PROVIDERS } from '../services/ai-providers.js';
 import { getAiConfig, callAiChat, listModels } from '../services/ai-client.js';
@@ -26,7 +31,7 @@ router.put('/', (req, res) => {
     return res.status(400).json({ error: 'No settings provided' });
   }
 
-  const unknown = keys.filter((k) => !SETTINGS_REGISTRY[k]);
+  const unknown = keys.filter((k) => !SETTINGS_REGISTRY[k] || SETTINGS_REGISTRY[k].internal);
   if (unknown.length > 0) {
     return res.status(400).json({ error: `Unknown setting key(s): ${unknown.join(', ')}` });
   }
@@ -49,6 +54,11 @@ router.put('/', (req, res) => {
 router.post('/test-discord', async (req, res) => {
   const result = await sendTestNotification();
   res.status(result.success ? 200 : 400).json(result);
+});
+
+// GET /api/settings/notification-types — labels for the routing table.
+router.get('/notification-types', (req, res) => {
+  res.json(Object.entries(NOTIFICATION_TYPES).map(([type, { label }]) => ({ type, label })));
 });
 
 // GET /api/settings/ai-providers — the provider catalogue for the Settings

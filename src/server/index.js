@@ -6,7 +6,12 @@ import { fileURLToPath } from 'url';
 
 import { initDb } from './db.js';
 import { registerCronJobs } from './cron.js';
-import { checkEncryptedSettingsDecryptable, migrateLegacyDeepseekSetting } from './services/settings-store.js';
+import {
+  checkEncryptedSettingsDecryptable,
+  migrateLegacyDeepseekSetting,
+  migrateLegacyNotificationSettings,
+} from './services/settings-store.js';
+import { ensureVapidKeys } from './services/push.js';
 
 import authRoutes from './routes/auth.js';
 import categoriesRoutes from './routes/categories.js';
@@ -19,6 +24,7 @@ import settingsRoutes from './routes/settings.js';
 import importRoutes from './routes/import.js';
 import bankRoutes from './routes/bank.js';
 import insightsRoutes from './routes/insights.js';
+import pushRoutes from './routes/push.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -32,10 +38,14 @@ initDb();
 
 // One-time move of the legacy deepseek_api_key into the AI provider settings.
 migrateLegacyDeepseekSetting();
+migrateLegacyNotificationSettings();
 
 // Surface a clear message (not an opaque crypto error) if ENCRYPTION_KEY
 // changed and stored AI provider / bank secrets can no longer be decrypted.
 checkEncryptedSettingsDecryptable();
+
+// Web Push keypair for PWA notifications (generated once, kept in settings).
+ensureVapidKeys();
 
 const app = express();
 app.disable('x-powered-by');
@@ -61,6 +71,7 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/import', importRoutes);
 app.use('/api/bank', bankRoutes);
 app.use('/api/insights', insightsRoutes);
+app.use('/api/push', pushRoutes);
 
 // Public, unauthenticated Privacy Policy and Terms of Service pages — Enable
 // Banking requires (and verifies) reachable privacy/terms URLs on a production

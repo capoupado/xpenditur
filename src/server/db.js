@@ -133,6 +133,15 @@ CREATE TABLE IF NOT EXISTS bank_auth_requests (
   return_url TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Browsers/devices subscribed to Web Push (PWA notifications).
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id INTEGER PRIMARY KEY,
+  endpoint TEXT UNIQUE NOT NULL,
+  keys_json TEXT NOT NULL,
+  user_agent TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 `;
 
 function tableHasColumn(table, column) {

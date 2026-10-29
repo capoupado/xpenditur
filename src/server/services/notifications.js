@@ -1,4 +1,5 @@
-// Phase 5 — Discord webhook notifications.
+// Phase 5 — notifications, delivered to Discord (webhook) and/or Web Push
+// (services/push.js) per notification type — see dispatch().
 //
 // Every public "send" function is fire-and-forget: it kicks off a fetch POST
 // and returns immediately. Failures (network error, missing/invalid webhook,
@@ -14,6 +15,7 @@ import db from '../db.js';
 import { getSetting, getSettingNumber } from './settings-store.js';
 import { getEffectiveBudget, getCategorySpend } from './budget-lookup.js';
 import { unusualSpendingFor, hotCategories } from './insights.js';
+import { sendPushToAll } from './push.js';
 import * as __dates from '../utils/dates.js';
 
 const { currentLocalMonth } = __dates;
@@ -60,6 +62,25 @@ function fireAndForget(buildAndSend, label) {
     .catch((err) => {
       console.error(`[notifications] ${label} failed (non-fatal):`, err.message);
     });
+}
+
+// Routes one notification to the channels its notify_<type> setting picks
+// (off | discord | push | both — see NOTIFICATION_TYPES in settings-store).
+// `build()` returns { embed, push: { title, body, url } } (or null to send
+// nothing) and only runs when at least one channel is on.
+function dispatch(type, build, label) {
+  fireAndForget(async () => {
+    const setting = getSetting(`notify_${type}`);
+    const discord = setting === 'discord' || setting === 'both';
+    const push = setting === 'push' || setting === 'both';
+    if (!discord && !push) return;
+    const message = await build();
+    if (!message) return;
+    await Promise.all([
+      discord && postToDiscord({ embeds: [message.embed] }),
+      push && sendPushToAll({ tag: type, ...message.push }),
+    ]);
+  }, label);
 }
 
 // ---------------------------------------------------------------------------
@@ -222,26 +243,87 @@ function testEmbed() {
 // NotificationService signature. `thresholdPct` (80 or 100) says which
 // threshold this particular alert is for, driving the embed's urgency color.
 export function sendBudgetAlert(category, spent, limit, percentage, thresholdPct) {
-  fireAndForget(
-    () => postToDiscord({ embeds: [budgetAlertEmbed(category, spent, limit, percentage, thresholdPct)] }),
+  dispatch(
+    'budget_alert',
+    () => ({
+      embed: budgetAlertEmbed(category, spent, limit, percentage, thresholdPct),
+      push: {
+        title: `${thresholdPct >= 100 ? '🚨' : '⚠️'} ${category.name} at ${percentage.toFixed(0)}% of budget`,
+        body: `${centsToEuro(spent)} of ${centsToEuro(limit)} spent this month.`,
+        url: '/budgets',
+      },
+    }),
     'sendBudgetAlert'
   );
 }
 
 export function sendRecurringReminder(transaction) {
-  fireAndForget(() => postToDiscord({ embeds: [recurringReminderEmbed(transaction)] }), 'sendRecurringReminder');
+  dispatch(
+    'recurring_created',
+    () => ({
+      embed: recurringReminderEmbed(transaction),
+      push: {
+        title: 'Recurring transaction created',
+        body: `${transaction.type === 'earning' ? '+' : '-'}${centsToEuro(transaction.amount)} ${transaction.description || ''}`.trim(),
+        url: '/transactions',
+      },
+    }),
+    'sendRecurringReminder'
+  );
+}
+
+// Reminder that transactions are waiting on the Pending page (cron, at the
+// hours in pending_reminder_hours). Silent when nothing is pending.
+export function sendPendingReminder() {
+  dispatch(
+    'pending_reminder',
+    () => {
+      const { n, total } = db
+        .prepare("SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total FROM pending_transactions WHERE status = 'pending'")
+        .get();
+      if (n === 0) return null;
+      const text = `${n} transaction${n === 1 ? '' : 's'} (${centsToEuro(total)}) waiting for your approval.`;
+      return {
+        embed: { title: '📥 Pending transactions', description: text, color: COLOR_BLUE, footer: nowFooter() },
+        push: { title: `${n} pending transaction${n === 1 ? '' : 's'}`, body: text, url: '/pending' },
+      };
+    },
+    'sendPendingReminder'
+  );
 }
 
 export function sendBankExpiryWarning(conn) {
-  fireAndForget(() => postToDiscord({ embeds: [bankExpiryEmbed(conn)] }), 'sendBankExpiryWarning');
+  dispatch(
+    'bank_expiry',
+    () => {
+      const embed = bankExpiryEmbed(conn);
+      return {
+        embed,
+        push: { title: embed.title.replace(/^⏳ /, ''), body: 'Reconnect it in Settings → Bank sync.', url: '/settings/bank' },
+      };
+    },
+    'sendBankExpiryWarning'
+  );
 }
 
 export function sendAutoApprovedSummary(transactions, left) {
-  fireAndForget(() => {
-    const names = new Map(db.prepare('SELECT id, name FROM categories').all().map((c) => [c.id, c.name]));
-    const rows = transactions.map((t) => ({ ...t, category_name: names.get(t.category_id) || '?' }));
-    return postToDiscord({ embeds: [autoApprovedEmbed(rows, left)] });
-  }, 'sendAutoApprovedSummary');
+  dispatch(
+    'auto_approved',
+    () => {
+      const names = new Map(db.prepare('SELECT id, name FROM categories').all().map((c) => [c.id, c.name]));
+      const rows = transactions.map((t) => ({ ...t, category_name: names.get(t.category_id) || '?' }));
+      const n = rows.length;
+      return {
+        embed: autoApprovedEmbed(rows, left),
+        push: {
+          title: `Auto-approved ${n} transaction${n === 1 ? '' : 's'}`,
+          body: left > 0 ? `${left} still waiting for you.` : 'Nothing left to review.',
+          url: left > 0 ? '/pending' : '/transactions',
+        },
+      };
+    },
+    'sendAutoApprovedSummary'
+  );
 }
 
 function computeWeeklySummaryData() {
@@ -304,10 +386,17 @@ function currentMonthBudgetStatuses(month) {
 }
 
 export function sendWeeklySummary() {
-  fireAndForget(async () => {
-    const data = computeWeeklySummaryData();
-    return postToDiscord({ embeds: [weeklySummaryEmbed(data)] });
-  }, 'sendWeeklySummary');
+  dispatch(
+    'weekly_summary',
+    () => {
+      const data = computeWeeklySummaryData();
+      return {
+        embed: weeklySummaryEmbed(data),
+        push: { title: 'Weekly summary', body: `${centsToEuro(data.totalSpent)} spent in the last 7 days.`, url: '/' },
+      };
+    },
+    'sendWeeklySummary'
+  );
 }
 
 function computeMonthlySummaryData() {
@@ -334,10 +423,21 @@ function computeMonthlySummaryData() {
 }
 
 export function sendMonthlySummary() {
-  fireAndForget(async () => {
-    const data = computeMonthlySummaryData();
-    return postToDiscord({ embeds: [monthlySummaryEmbed(data)] });
-  }, 'sendMonthlySummary');
+  dispatch(
+    'monthly_summary',
+    () => {
+      const data = computeMonthlySummaryData();
+      return {
+        embed: monthlySummaryEmbed(data),
+        push: {
+          title: `Monthly recap — ${data.month}`,
+          body: `Earned ${centsToEuro(data.earnings)}, spent ${centsToEuro(data.spending)}, net ${data.net >= 0 ? '+' : ''}${centsToEuro(data.net)}.`,
+          url: '/',
+        },
+      };
+    },
+    'sendMonthlySummary'
+  );
 }
 
 // Awaited (not fire-and-forget) — the Settings UI's test button needs a real
@@ -441,13 +541,20 @@ const UNUSUAL_ALERT_MAX_AGE_DAYS = 7;
 export function checkUnusualSpending(transaction) {
   try {
     if (!transaction || transaction.type !== 'spending' || transaction.recurring_id != null) return;
-    if (getSetting('unusual_spending_alerts') !== '1') return;
     if (transaction.date < __dates.addDays(__dates.todayLocalDate(), -UNUSUAL_ALERT_MAX_AGE_DAYS)) return;
     const unusual = unusualSpendingFor(transaction);
     if (!unusual) return;
     const category = db.prepare('SELECT name, icon FROM categories WHERE id = ?').get(transaction.category_id);
-    fireAndForget(
-      () => postToDiscord({ embeds: [unusualSpendingEmbed(transaction, category, unusual)] }),
+    dispatch(
+      'unusual_spending',
+      () => ({
+        embed: unusualSpendingEmbed(transaction, category, unusual),
+        push: {
+          title: `Unusual spending — ${category?.name || ''}`.trim(),
+          body: `${centsToEuro(transaction.amount)}${transaction.description ? ` ${transaction.description}` : ''}: ${unusual.ratio.toFixed(1)}× the usual.`,
+          url: '/transactions',
+        },
+      }),
       'checkUnusualSpending'
     );
   } catch (err) {
@@ -473,6 +580,7 @@ export function onRecurringMaterialised(transaction) {
 export default {
   sendBudgetAlert,
   sendRecurringReminder,
+  sendPendingReminder,
   sendBankExpiryWarning,
   sendAutoApprovedSummary,
   sendWeeklySummary,

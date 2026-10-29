@@ -11,3 +11,10 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     </BrowserRouter>
   </React.StrictMode>
 );
+
+// PWA: installability + Web Push (public/sw.js). Needs HTTPS (or localhost).
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => console.warn('Service worker registration failed:', err));
+  });
+}

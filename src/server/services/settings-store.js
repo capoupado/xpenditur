@@ -10,6 +10,20 @@ import crypto from 'crypto';
 import db from '../db.js';
 import { AI_PROVIDER_IDS } from './ai-providers.js';
 
+// Every notification the app can send, and its default channels. Each gets
+// a notify_<type> setting: off | discord | push | both.
+export const NOTIFICATION_TYPES = {
+  pending_reminder: { label: 'Pending transactions reminder', default: 'push' },
+  auto_approved: { label: 'Auto-approved transactions', default: 'both' },
+  budget_alert: { label: 'Budget alerts', default: 'both' },
+  unusual_spending: { label: 'Unusual spending', default: 'both' },
+  bank_expiry: { label: 'Bank consent expiring', default: 'both' },
+  recurring_created: { label: 'Recurring transaction created', default: 'discord' },
+  weekly_summary: { label: 'Weekly summary', default: 'discord' },
+  monthly_summary: { label: 'Monthly recap', default: 'discord' },
+};
+export const NOTIFY_CHANNEL_VALUES = ['off', 'discord', 'push', 'both'];
+
 const DISCORD_WEBHOOK_RE = /^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/.+/;
 
 function isNonEmptyString(v) {
@@ -71,13 +85,32 @@ export const SETTINGS_REGISTRY = {
     encrypt: false,
     default: '1',
   },
-  unusual_spending_alerts: {
-    validate: (v) => v === '0' || v === '1',
-    validateMessage: 'must be 0 or 1',
+  // ---- Notification routing: per type, which channels deliver it ----
+  ...Object.fromEntries(
+    Object.entries(NOTIFICATION_TYPES).map(([type, meta]) => [
+      `notify_${type}`,
+      {
+        validate: (v) => NOTIFY_CHANNEL_VALUES.includes(v),
+        validateMessage: `must be one of: ${NOTIFY_CHANNEL_VALUES.join(', ')}`,
+        mask: false,
+        encrypt: false,
+        default: meta.default,
+      },
+    ])
+  ),
+  // Hours of the day (0-23, comma-separated) at which to remind about
+  // transactions waiting on the Pending page. Empty = never.
+  pending_reminder_hours: {
+    validate: (v) =>
+      v === '' || v.split(',').every((h) => /^\d{1,2}$/.test(h) && Number(h) >= 0 && Number(h) <= 23),
+    validateMessage: 'must be comma-separated hours 0-23, or empty',
     mask: false,
     encrypt: false,
-    default: '1',
+    default: '9,19',
   },
+  // Web Push (VAPID) keypair — generated on first boot, never edited.
+  vapid_public_key: { validate: validateAnyString, mask: false, encrypt: false, internal: true, default: '' },
+  vapid_private_key: { validate: validateAnyString, mask: true, encrypt: true, internal: true, default: '' },
   // ---- Automation: what happens to freshly synced/imported pending rows ----
   auto_categorize: {
     validate: (v) => v === '0' || v === '1',
@@ -231,6 +264,7 @@ export function setSetting(key, value) {
 export function getAllSettingsForDisplay() {
   const out = {};
   for (const [key, meta] of Object.entries(SETTINGS_REGISTRY)) {
+    if (meta.internal) continue;
     const value = getSetting(key, meta.default ?? '');
     out[key] = meta.mask ? maskValue(value) : value;
   }
@@ -282,9 +316,25 @@ export function migrateLegacyDeepseekSetting() {
 }
 
 
+/**
+ * One-time move of the old unusual_spending_alerts on/off switch into the
+ * per-type channel setting. Idempotent.
+ */
+export function migrateLegacyNotificationSettings() {
+  const legacy = db.prepare("SELECT value FROM settings WHERE key = 'unusual_spending_alerts'").get();
+  if (!legacy) return;
+  db.transaction(() => {
+    if (legacy.value === '0') {
+      db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('notify_unusual_spending', 'off')").run();
+    }
+    db.prepare("DELETE FROM settings WHERE key = 'unusual_spending_alerts'").run();
+  })();
+}
+
 export default {
   SETTINGS_REGISTRY,
   migrateLegacyDeepseekSetting,
+  migrateLegacyNotificationSettings,
   getSetting,
   getSettingNumber,
   setSetting,
