@@ -366,6 +366,7 @@ export async function syncBankAccounts() {
 
   const today = todayLocalDate();
   const totals = { fetched: 0, inserted: 0, skippedDuplicates: 0, skippedRows: 0 };
+  const insertedIds = [];
   const perAccount = [];
   const errors = [];
 
@@ -381,10 +382,19 @@ export async function syncBankAccounts() {
       transactions = await fetchAllTransactions(account.uid, dateFrom);
     } catch (err) {
       console.error(`[enablebanking] Sync failed for "${label}":`, err.message);
-      counts.error =
-        err.httpStatus === 401 || err.httpStatus === 403
-          ? `${err.message} — the consent may have expired; reconnect the bank in Settings.`
-          : err.message;
+      const consentGone = err.httpStatus === 401 || err.httpStatus === 403;
+      counts.error = consentGone
+        ? `${err.message} — the consent may have expired; reconnect the bank in Settings.`
+        : err.message;
+      // The bank refused the consent before its stated end: record it as
+      // expired now so the app banner offers a reconnect.
+      if (consentGone) {
+        db.prepare('UPDATE bank_connections SET valid_until = ? WHERE id = ? AND (valid_until IS NULL OR valid_until > ?)').run(
+          new Date().toISOString(),
+          account.connection_id,
+          new Date().toISOString()
+        );
+      }
       errors.push(`${label}: ${counts.error}`);
       perAccount.push(counts);
       continue;
@@ -412,7 +422,7 @@ export async function syncBankAccounts() {
         continue;
       }
       recordProcessed(BANK_SYNC_SOURCE, dedupId);
-      insert.run(
+      const info = insert.run(
         row.type,
         row.amount,
         row.currency,
@@ -422,6 +432,7 @@ export async function syncBankAccounts() {
         `Bank: ${label}`,
         JSON.stringify({ source: 'bank-sync', account: label, ...txn })
       );
+      insertedIds.push(Number(info.lastInsertRowid));
       counts.inserted++;
     }
 
@@ -433,7 +444,7 @@ export async function syncBankAccounts() {
     perAccount.push(counts);
   }
 
-  return { ...totals, accounts: perAccount, ...(errors.length ? { error: errors.join('; ') } : {}) };
+  return { ...totals, insertedIds, accounts: perAccount, ...(errors.length ? { error: errors.join('; ') } : {}) };
 }
 
 export default {

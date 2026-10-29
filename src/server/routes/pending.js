@@ -18,93 +18,22 @@
 import express from 'express';
 import db from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
-import { isValidDateString, isFutureDate } from '../utils/dates.js';
-import { checkBudgetAlertForTransaction, checkUnusualSpending } from '../services/notifications.js';
-import { getAiConfig, callAiChat } from '../services/ai-client.js';
-import { buildCategoryHistory } from '../services/category-history.js';
+import { isFutureDate } from '../utils/dates.js';
 import {
-  parseExtractionResponse,
-  resolveCategoryId,
-  clampConfidence,
-} from '../services/ai-response.js';
+  validateResolvedTransaction,
+  commitApproval,
+  getPending,
+  decorate,
+  plainApproveBlocker,
+  plainApprovalFields,
+  categorizePending,
+  autoApprovePending,
+} from '../services/pending-review.js';
 
 const router = express.Router();
 router.use(requireAuth);
 
-const VALID_TYPES = ['earning', 'spending'];
 const VALID_STATUSES = ['pending', 'approved', 'rejected'];
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function checkCategoryTypeMatch(categoryId, type) {
-  const category = db.prepare('SELECT * FROM categories WHERE id = ?').get(categoryId);
-  if (!category) return 'category_id does not reference an existing category';
-  if (category.type !== 'both' && category.type !== type) {
-    return `category "${category.name}" is of type "${category.type}" and cannot be used for a "${type}" transaction`;
-  }
-  return null;
-}
-
-// Validate a fully-resolved set of transaction fields (as a transaction create
-// would). Returns an error string or null.
-function validateResolvedTransaction({ type, amount, category_id, date }) {
-  if (!VALID_TYPES.includes(type)) return `type must be one of ${VALID_TYPES.join(', ')}`;
-  if (!Number.isInteger(amount) || amount <= 0) return 'amount must be a positive integer number of cents';
-  if (!Number.isInteger(category_id)) return 'category_id is required';
-  if (!isValidDateString(date)) return 'date must be a valid YYYY-MM-DD date';
-  if (isFutureDate(date)) return 'date cannot be in the future';
-  return checkCategoryTypeMatch(category_id, type);
-}
-
-// Create the real transaction from resolved fields and mark the pending row
-// approved + linked, atomically. Returns the created transaction row. Fires the
-// budget-alert check AFTER the write commits (the row already exists).
-function commitApproval(pendingId, fields) {
-  const run = db.transaction(() => {
-    const info = db
-      .prepare('INSERT INTO transactions (type, amount, description, category_id, date) VALUES (?, ?, ?, ?, ?)')
-      .run(fields.type, fields.amount, fields.description ?? null, fields.category_id, fields.date);
-    const txnId = info.lastInsertRowid;
-    db.prepare("UPDATE pending_transactions SET status = 'approved', transaction_id = ? WHERE id = ?").run(
-      txnId,
-      pendingId
-    );
-    return txnId;
-  });
-  const txnId = run();
-  const transaction = db.prepare('SELECT * FROM transactions WHERE id = ?').get(txnId);
-  try {
-    checkBudgetAlertForTransaction(transaction);
-  } catch (err) {
-    console.error('[pending] budget alert check failed (non-fatal):', err.message);
-  }
-  checkUnusualSpending(transaction);
-  return transaction;
-}
-
-function getPending(id) {
-  return db.prepare('SELECT * FROM pending_transactions WHERE id = ?').get(id);
-}
-
-// Surface confidence/vendor (stored only inside raw_extracted_json) alongside
-// the row for the UI's confidence indicator.
-function decorate(row) {
-  let confidence = null;
-  let vendor = null;
-  if (row.raw_extracted_json) {
-    try {
-      const parsed = JSON.parse(row.raw_extracted_json);
-      const c = Number(parsed.confidence);
-      confidence = Number.isFinite(c) ? Math.max(0, Math.min(1, c)) : null;
-      vendor = typeof parsed.vendor === 'string' ? parsed.vendor : null;
-    } catch {
-      /* leave nulls */
-    }
-  }
-  return { ...row, confidence, vendor };
-}
 
 // ---------------------------------------------------------------------------
 // GET /api/pending?status=pending|approved|rejected|all
@@ -159,13 +88,7 @@ router.post('/:id/approve', (req, res) => {
     });
   }
 
-  const fields = {
-    type: pending.type,
-    amount: pending.amount,
-    description: pending.description,
-    category_id: pending.suggested_category_id,
-    date: pending.date,
-  };
+  const fields = plainApprovalFields(pending);
   const err = validateResolvedTransaction(fields);
   if (err) return res.status(400).json({ error: err });
 
@@ -265,21 +188,12 @@ router.post('/bulk', (req, res) => {
       skipped.push({ id, reason: `already ${pending.status}` });
       continue;
     }
-    if (pending.currency !== 'EUR') {
-      skipped.push({ id, reason: `quarantined (${pending.currency}) — use Edit & Approve` });
+    const blocker = plainApproveBlocker(pending);
+    if (blocker) {
+      skipped.push({ id, reason: blocker });
       continue;
     }
-    if (isFutureDate(pending.date)) {
-      skipped.push({ id, reason: 'future-dated — use Edit & Approve' });
-      continue;
-    }
-    const fields = {
-      type: pending.type,
-      amount: pending.amount,
-      description: pending.description,
-      category_id: pending.suggested_category_id,
-      date: pending.date,
-    };
+    const fields = plainApprovalFields(pending);
     const err = validateResolvedTransaction(fields);
     if (err) {
       skipped.push({ id, reason: err });
@@ -294,136 +208,27 @@ router.post('/bulk', (req, res) => {
 // ---------------------------------------------------------------------------
 // POST /api/pending/categorize — { ids: [...] }
 //
-// Re-categorizes pending rows. Mainly useful for statement/file imports, which
-// all land as "Other". Rows whose description the user has categorized before
-// reuse that category from the ledger (services/category-history.js); only
-// the rest go to the configured AI provider. Updates suggested_category_id
-// and stores the confidence + source in raw_extracted_json (so the UI's
-// confidence dot reflects the categorization). Rows stay pending — the user
-// still approves.
+// Re-categorizes pending rows (ledger history first, then the AI provider —
+// see services/pending-review.js). Rows stay pending; the user still approves.
 // ---------------------------------------------------------------------------
-
-const CATEGORIZE_BATCH_SIZE = 40;
-
-function buildCategorizationPrompt(categoryNames) {
-  const list = (categoryNames && categoryNames.length ? categoryNames : ['Other']).join(', ');
-  return `You are a financial transaction categorizer. You will receive a JSON array of transactions.
-For each, pick the single best matching category from: [${list}].
-Respond ONLY with a JSON object, no other text:
-{"assignments": [{"id": number — the transaction's id, "category": "string — exactly one of the listed category names", "confidence": number — 0 to 1}]}`;
-}
 
 router.post('/categorize', async (req, res) => {
   const { ids } = req.body || {};
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: 'ids must be a non-empty array' });
   }
+  res.json(await categorizePending(ids));
+});
 
-  const ai = getAiConfig();
+// ---------------------------------------------------------------------------
+// POST /api/pending/auto-approve — approve every pending row whose category
+// suggestion meets the configured confidence (Settings → Automation), the
+// same pass that runs automatically after a sync or import.
+// ---------------------------------------------------------------------------
 
-  const categories = db.prepare('SELECT id, name, type, is_system FROM categories').all();
-  const categoryNames = categories.map((c) => c.name);
-  const categoryById = new Map(categories.map((c) => [c.id, c]));
-  const otherId = (categories.find((c) => c.is_system === 1) || categories.find((c) => c.name === 'Other'))?.id;
-
-  const skipped = [];
-  const candidates = [];
-  for (const rawId of ids) {
-    const id = Number(rawId);
-    const pending = getPending(id);
-    if (!pending) {
-      skipped.push({ id, reason: 'not found' });
-      continue;
-    }
-    if (pending.status !== 'pending') {
-      skipped.push({ id, reason: `already ${pending.status}` });
-      continue;
-    }
-    candidates.push(decorate(pending));
-  }
-
-  let categorized = 0;
-  let fromHistory = 0;
-  const update = db.prepare(
-    "UPDATE pending_transactions SET suggested_category_id = ?, raw_extracted_json = ? WHERE id = ? AND status = 'pending'"
-  );
-  const saveSuggestion = (row, categoryId, { name, confidence, source }) => {
-    let raw = {};
-    if (row.raw_extracted_json) {
-      try {
-        raw = JSON.parse(row.raw_extracted_json);
-      } catch {
-        /* start fresh */
-      }
-    }
-    raw.category_suggestion = name;
-    raw.category_source = source;
-    raw.confidence = clampConfidence(confidence);
-    update.run(categoryId, JSON.stringify(raw), row.id);
-    categorized++;
-  };
-
-  // 1. Ledger history — free, deterministic, and knows the user's context.
-  const history = buildCategoryHistory({ ignoreCategoryIds: otherId ? [otherId] : [] });
-  const rows = [];
-  for (const row of candidates) {
-    const hit = history.suggest(row.description, row.type) || history.suggest(row.vendor, row.type);
-    const category = hit && categoryById.get(hit.categoryId);
-    if (category) {
-      saveSuggestion(row, category.id, { name: category.name, confidence: hit.confidence, source: 'history' });
-      fromHistory++;
-    } else {
-      rows.push(row);
-    }
-  }
-
-  // 2. AI for descriptions never seen before.
-  if (!ai) {
-    if (fromHistory === 0) return res.json({ noop: true });
-    rows.forEach((r) => skipped.push({ id: r.id, reason: 'no match in history and no AI provider configured' }));
-    rows.length = 0;
-  }
-
-  for (let i = 0; i < rows.length; i += CATEGORIZE_BATCH_SIZE) {
-    const batch = rows.slice(i, i + CATEGORIZE_BATCH_SIZE);
-    const userContent = JSON.stringify(
-      batch.map((r) => ({
-        id: r.id,
-        description: r.description,
-        vendor: r.vendor,
-        type: r.type,
-        amount: `${(r.amount / 100).toFixed(2)} ${r.currency}`,
-        date: r.date,
-      }))
-    );
-
-    let assignments;
-    try {
-      const content = await callAiChat(ai, {
-        systemPrompt: buildCategorizationPrompt(categoryNames),
-        userContent,
-      });
-      const parsed = parseExtractionResponse(content);
-      assignments = Array.isArray(parsed?.assignments) ? parsed.assignments : [];
-    } catch (err) {
-      console.error('[pending] categorize batch failed (non-fatal):', err.message);
-      batch.forEach((r) => skipped.push({ id: r.id, reason: `${ai.label} error: ${err.message.slice(0, 120)}` }));
-      continue;
-    }
-
-    const byId = new Map(assignments.map((a) => [Number(a.id), a]));
-    for (const row of batch) {
-      const a = byId.get(row.id);
-      if (!a || typeof a.category !== 'string') {
-        skipped.push({ id: row.id, reason: 'model returned no assignment' });
-        continue;
-      }
-      const categoryId = resolveCategoryId(a.category, row.type, categories, otherId);
-      saveSuggestion(row, categoryId, { name: a.category, confidence: a.confidence, source: 'ai' });
-    }
-  }
-
-  res.json({ categorized, fromHistory, skipped });
+router.post('/auto-approve', (req, res) => {
+  const { approved, left } = autoApprovePending();
+  res.json({ approved: approved.length, left });
 });
 
 export default router;

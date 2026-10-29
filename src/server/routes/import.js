@@ -1,10 +1,12 @@
 // Bank statement file import (CSV / PDF). The client reads the chosen file
 // and posts it as base64 JSON — no multipart handling needed. Parsed rows land
-// in pending_transactions for review; nothing touches the ledger directly.
+// in pending_transactions; the automatic review pass (Settings → Automation)
+// may categorize and approve the confident ones, the rest wait for the user.
 
 import express from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { importStatementFile } from '../services/statement-import.js';
+import { reviewNewPending } from '../services/pending-review.js';
 
 const MAX_FILE_BYTES = 15 * 1024 * 1024;
 
@@ -32,8 +34,8 @@ router.post('/statement', async (req, res) => {
   }
 
   try {
-    const result = await importStatementFile({ filename: filename.trim(), buffer });
-    res.json(result);
+    const { insertedIds, ...result } = await importStatementFile({ filename: filename.trim(), buffer });
+    res.json({ ...result, review: await reviewNewPending(insertedIds) });
   } catch (err) {
     console.error('[import] statement import failed:', err.message);
     res.status(err.status || 500).json({ error: err.message });

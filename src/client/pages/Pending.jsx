@@ -43,6 +43,12 @@ function AmountCell({ row }) {
   );
 }
 
+// Suffix for sync/import toasts describing the automatic review pass.
+function reviewSummary(review) {
+  if (!review || !review.autoApproved) return '';
+  return ` — ${review.autoApproved} auto-approved, ${review.left} left for you`;
+}
+
 const SOURCE_LABELS = { 'bank-sync': '🏦 Bank', 'file-import': '📄 File', email: '✉️ Email' };
 
 export default function Pending() {
@@ -87,7 +93,7 @@ export default function Pending() {
       if (c.noop) {
         toast('No bank connected — set one up in Settings.', { icon: 'ℹ️' });
       } else {
-        toast.success(`Fetched ${c.fetched}, new ${c.inserted}, duplicates ${c.skippedDuplicates}`);
+        toast.success(`Fetched ${c.fetched}, new ${c.inserted}, duplicates ${c.skippedDuplicates}${reviewSummary(c.review)}`);
         if (c.error) toast.error(c.error);
       }
       await load();
@@ -111,7 +117,7 @@ export default function Pending() {
         contentBase64: btoa(binary),
       });
       toast.success(
-        `Parsed ${res.parsed} row${res.parsed === 1 ? '' : 's'} — imported ${res.inserted}, duplicates ${res.skippedDuplicates}, skipped ${res.skippedRows}`
+        `Parsed ${res.parsed} row${res.parsed === 1 ? '' : 's'} — imported ${res.inserted}, duplicates ${res.skippedDuplicates}, skipped ${res.skippedRows}${reviewSummary(res.review)}`
       );
       await load();
     } catch (err) {
@@ -198,6 +204,19 @@ export default function Pending() {
     }
   };
 
+  const approveConfident = async () => {
+    setCategorizing(true);
+    try {
+      const res = await api.post('/pending/auto-approve', {});
+      toast.success(`${res.approved} approved, ${res.left} left for you`);
+      await load();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setCategorizing(false);
+    }
+  };
+
   const bulk = async (action) => {
     const ids = [...selected];
     if (ids.length === 0) return;
@@ -246,6 +265,16 @@ export default function Pending() {
           >
             {importing ? 'Importing…' : '⇪ Import file'}
           </button>
+          {isPendingTab && rows.some((r) => r.confidence != null) && (
+            <button
+              onClick={approveConfident}
+              disabled={categorizing}
+              title="Approve every row whose category confidence meets the threshold in Settings → Automation"
+              className="rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-sm font-medium px-4 py-2 transition-colors"
+            >
+              ✓ Approve confident
+            </button>
+          )}
           <button
             onClick={syncBanks}
             disabled={syncing}
@@ -356,8 +385,13 @@ export default function Pending() {
                     <td className="px-4 py-2 text-gray-400 whitespace-nowrap">
                       {row.suggested_category_icon} {row.suggested_category_name}
                     </td>
-                    <td className="px-4 py-2">
+                    <td className="px-4 py-2 whitespace-nowrap">
                       <ConfidenceDot value={row.confidence} />
+                      {row.auto_approved && (
+                        <span className="ml-2 border border-lime/40 px-1.5 py-px text-[10px] font-bold uppercase tracking-wide text-lime">
+                          auto
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-2 text-gray-400 whitespace-nowrap">
                       {SOURCE_LABELS[row.source_kind] || '—'}

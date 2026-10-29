@@ -368,7 +368,7 @@ export function insertImportedRows(rows, filename) {
   );
 
   const occurrences = new Map();
-  let inserted = 0;
+  const insertedIds = [];
   let skippedDuplicates = 0;
 
   const runAll = db.transaction(() => {
@@ -385,7 +385,7 @@ export function insertImportedRows(rows, filename) {
         continue;
       }
       recordProcessed(IMPORT_SOURCE, dedupId);
-      insert.run(
+      const info = insert.run(
         type,
         amount,
         row.description,
@@ -394,12 +394,12 @@ export function insertImportedRows(rows, filename) {
         `Import: ${filename}`,
         JSON.stringify({ source: 'file-import', filename, ...row })
       );
-      inserted++;
+      insertedIds.push(Number(info.lastInsertRowid));
     }
   });
   runAll();
 
-  return { inserted, skippedDuplicates };
+  return { inserted: insertedIds.length, insertedIds, skippedDuplicates };
 }
 
 // ---------------------------------------------------------------------------
@@ -410,7 +410,7 @@ export function insertImportedRows(rows, filename) {
  * Import one uploaded statement file. `buffer` is the raw file bytes.
  * Throws errors with a `.status` for the route to relay.
  *
- * @returns { source: 'csv'|'pdf', parsed, inserted, skippedDuplicates, skippedRows }
+ * @returns { source: 'csv'|'pdf', parsed, inserted, insertedIds, skippedDuplicates, skippedRows }
  */
 export async function importStatementFile({ filename, buffer }) {
   const ext = String(filename || '').toLowerCase().split('.').pop();
@@ -427,11 +427,12 @@ export async function importStatementFile({ filename, buffer }) {
     throw importError('Unsupported file type — upload a .csv or .pdf bank statement export.');
   }
 
-  const { inserted, skippedDuplicates } = insertImportedRows(parsed.rows, filename);
+  const { inserted, insertedIds, skippedDuplicates } = insertImportedRows(parsed.rows, filename);
   return {
     source,
     parsed: parsed.rows.length,
     inserted,
+    insertedIds,
     skippedDuplicates,
     skippedRows: parsed.skippedRows,
   };

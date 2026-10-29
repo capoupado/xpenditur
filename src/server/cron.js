@@ -10,6 +10,7 @@ import { processDueRecurring } from './services/recurring.js';
 import { sendWeeklySummary, sendMonthlySummary, sendBankExpiryWarning } from './services/notifications.js';
 import { getSettingNumber } from './services/settings-store.js';
 import { syncBankAccounts, connectionExpiries } from './services/enablebanking.js';
+import { reviewNewPending } from './services/pending-review.js';
 
 const TZ = process.env.TZ || 'Europe/Lisbon';
 
@@ -85,7 +86,10 @@ export function registerCronJobs() {
       try {
         const counts = await syncBankAccounts();
         if (counts && !counts.noop && counts.inserted > 0) {
-          console.log(`[cron] bank sync: ${counts.inserted} new pending transaction(s).`);
+          const review = await reviewNewPending(counts.insertedIds);
+          console.log(
+            `[cron] bank sync: ${counts.inserted} new pending transaction(s), ${review.autoApproved} auto-approved.`
+          );
         }
         if (counts && counts.error) console.error('[cron] bank sync errors:', counts.error);
       } catch (err) {

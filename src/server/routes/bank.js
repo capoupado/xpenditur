@@ -8,6 +8,7 @@
 import express from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { getSetting } from '../services/settings-store.js';
+import { reviewNewPending } from '../services/pending-review.js';
 import {
   isConfigured,
   getApplication,
@@ -141,8 +142,8 @@ router.put('/accounts/:id', (req, res) => {
 // POST /api/bank/sync — sync all active accounts now.
 router.post('/sync', async (req, res) => {
   try {
-    const counts = await syncBankAccounts();
-    res.json(counts);
+    const { insertedIds = [], ...counts } = await syncBankAccounts();
+    res.json({ ...counts, review: await reviewNewPending(insertedIds) });
   } catch (err) {
     console.error('[bank] sync failed:', err.message);
     res.status(err.status || 500).json({ error: err.message });

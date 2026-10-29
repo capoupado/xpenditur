@@ -140,7 +140,7 @@ export default function BankSettings() {
   return (
     <SectionCard
       title="Bank sync (Enable Banking)"
-      description="Pull transactions from your banks (e.g. CGD, Novo Banco) into Pending via the Enable Banking PSD2 aggregator. Register a free personal application at enablebanking.com, download its private key, and paste the credentials here. Synced transactions are reviewed on the Pending page — nothing enters the ledger automatically. Sync runs daily at 07:30, or on demand below."
+      description="Pull transactions from your banks (e.g. CGD, Novo Banco) into Pending via the Enable Banking PSD2 aggregator. Register a free personal application at enablebanking.com, download its private key, and paste the credentials here. Synced transactions land on the Pending page; confident category matches can be approved automatically (Automation tab). Sync runs daily at 07:30, or on demand below."
     >
       <div className="space-y-5">
         <form onSubmit={handleSave} className="space-y-4">

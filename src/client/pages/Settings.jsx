@@ -1,6 +1,7 @@
 import React from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import NotificationSettings from './settings/NotificationSettings.jsx';
+import AutomationSettings from './settings/AutomationSettings.jsx';
 import AiSettings from './settings/AiSettings.jsx';
 import BankSettings from './settings/BankSettings.jsx';
 import AccountSettings from './settings/AccountSettings.jsx';
@@ -9,6 +10,7 @@ import AccountSettings from './settings/AccountSettings.jsx';
 // settings is one file plus one entry here.
 const TABS = [
   { path: 'notifications', label: 'Notifications', element: <NotificationSettings /> },
+  { path: 'automation', label: 'Automation', element: <AutomationSettings /> },
   { path: 'ai', label: 'AI provider', element: <AiSettings /> },
   { path: 'bank', label: 'Bank sync', element: <BankSettings /> },
   { path: 'account', label: 'Account', element: <AccountSettings /> },

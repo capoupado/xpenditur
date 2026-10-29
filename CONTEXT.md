@@ -47,6 +47,8 @@ A candidate Transaction awaiting the user's ruling — imported from a bank stat
 
 The type comes from the sign of the amount; the user can override it at Edit & Approve.
 
+**Automatic review:** right after a bank sync or statement import, the new rows are categorized (ledger history first, then the AI provider) and those whose category confidence meets the configured threshold (default 80%) are approved without the user — the same plain approval, flagged `auto_approved` in the row's audit JSON. Both steps are switchable in Settings → Automation. Foreign-currency and future-dated rows, and rows whose AI suggestion didn't match a real category, always wait for the user.
+
 **Always approvable by construction:** gaps are filled at intake — rows start in "Other" (or an unmatched AI category suggestion falls back to it). Plain Approve (and bulk approve) therefore never fails; Edit & Approve exists to disagree with the AI, not to repair it.
 
 **Exception — future date:** a Pending Transaction whose extracted date is in the future cannot be plain-approved (the ledger's no-future-dates rule wins); the user supplies a valid date via Edit & Approve.

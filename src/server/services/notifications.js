@@ -192,6 +192,19 @@ function bankExpiryEmbed(conn) {
   };
 }
 
+function autoApprovedEmbed(transactions, left) {
+  const lines = transactions
+    .slice(0, 10)
+    .map((t) => `${t.type === 'earning' ? '+' : '-'}${centsToEuro(t.amount)} ${t.description || '(no description)'} → ${t.category_name}`);
+  if (transactions.length > 10) lines.push(`…and ${transactions.length - 10} more`);
+  return {
+    title: `✅ Auto-approved ${transactions.length} transaction${transactions.length === 1 ? '' : 's'}`,
+    description: lines.join('\n') + (left > 0 ? `\n\n${left} still waiting for you on the Pending page.` : ''),
+    color: COLOR_GREEN,
+    footer: nowFooter(),
+  };
+}
+
 function testEmbed() {
   return {
     title: '✅ xPenditur test notification',
@@ -221,6 +234,14 @@ export function sendRecurringReminder(transaction) {
 
 export function sendBankExpiryWarning(conn) {
   fireAndForget(() => postToDiscord({ embeds: [bankExpiryEmbed(conn)] }), 'sendBankExpiryWarning');
+}
+
+export function sendAutoApprovedSummary(transactions, left) {
+  fireAndForget(() => {
+    const names = new Map(db.prepare('SELECT id, name FROM categories').all().map((c) => [c.id, c.name]));
+    const rows = transactions.map((t) => ({ ...t, category_name: names.get(t.category_id) || '?' }));
+    return postToDiscord({ embeds: [autoApprovedEmbed(rows, left)] });
+  }, 'sendAutoApprovedSummary');
 }
 
 function computeWeeklySummaryData() {
@@ -453,6 +474,7 @@ export default {
   sendBudgetAlert,
   sendRecurringReminder,
   sendBankExpiryWarning,
+  sendAutoApprovedSummary,
   sendWeeklySummary,
   sendMonthlySummary,
   sendTestNotification,

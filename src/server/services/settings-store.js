@@ -78,6 +78,28 @@ export const SETTINGS_REGISTRY = {
     encrypt: false,
     default: '1',
   },
+  // ---- Automation: what happens to freshly synced/imported pending rows ----
+  auto_categorize: {
+    validate: (v) => v === '0' || v === '1',
+    validateMessage: 'must be 0 or 1',
+    mask: false,
+    encrypt: false,
+    default: '1',
+  },
+  auto_approve: {
+    validate: (v) => v === '0' || v === '1',
+    validateMessage: 'must be 0 or 1',
+    mask: false,
+    encrypt: false,
+    default: '1',
+  },
+  auto_approve_min_confidence: {
+    validate: (v) => Number.isInteger(Number(v)) && Number(v) >= 50 && Number(v) <= 100,
+    validateMessage: 'must be an integer between 50 and 100',
+    mask: false,
+    encrypt: false,
+    default: '80',
+  },
   // ---- AI provider (see services/ai-providers.js) ----
   // The active provider is chosen here; each provider keeps its own key and
   // model (generated ai_key_<id> / ai_model_<id> entries below), so switching
