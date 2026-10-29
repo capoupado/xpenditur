@@ -120,6 +120,9 @@ CREATE TABLE IF NOT EXISTS bank_accounts (
   iban TEXT,
   name TEXT,
   currency TEXT,
+  -- Enable Banking's account identification hash: stable across sessions,
+  -- unlike uid, so a reconnect can find the account it replaces.
+  identification_hash TEXT,
   active INTEGER NOT NULL DEFAULT 1,
   last_sync DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -158,6 +161,9 @@ function migrateExisting() {
   }
   if (!tableHasColumn('users', 'token_version')) {
     db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!tableHasColumn('bank_accounts', 'identification_hash')) {
+    db.exec('ALTER TABLE bank_accounts ADD COLUMN identification_hash TEXT');
   }
   if (tableHasColumn('pending_transactions', 'source_email_subject')) {
     removeEmailIngestion();

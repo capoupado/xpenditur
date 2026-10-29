@@ -184,7 +184,7 @@ export async function completeBankAuth({ code, state }) {
     'INSERT INTO bank_connections (session_id, aspsp_name, aspsp_country, valid_until) VALUES (?, ?, ?, ?)'
   );
   const insertAcc = db.prepare(
-    'INSERT INTO bank_accounts (connection_id, uid, iban, name, currency) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO bank_accounts (connection_id, uid, iban, name, currency, identification_hash) VALUES (?, ?, ?, ?, ?, ?)'
   );
   const run = db.transaction(() => {
     const info = insertConn.run(
@@ -201,7 +201,8 @@ export async function completeBankAuth({ code, state }) {
         acc.uid,
         acc.account_id?.iban || null,
         acc.name || null,
-        acc.currency || null
+        acc.currency || null,
+        acc.identification_hash || null
       );
     }
     supersedeOlderConnections(connectionId);
@@ -213,35 +214,47 @@ export async function completeBankAuth({ code, state }) {
 
 // A reconnect (renewing an expiring consent) yields a new session covering
 // the same accounts — usually with the same uids, but some banks (CGD) issue
-// new ones, so an account is also matched by IBAN within the same bank. The
-// older connections covering those accounts are dropped, and each account
-// keeps its sync window and paused/active state.
+// new ones. An account is then matched, within the same bank, by
+// identification hash, then IBAN, then — for an account with neither (a card)
+// — the single older IBAN-less account with the same name. The older
+// connections covering those accounts are dropped, and each account keeps its
+// sync window and paused/active state (so a paused card stays paused).
 export function supersedeOlderConnections(connectionId) {
   const fresh = db.prepare('SELECT * FROM bank_accounts WHERE connection_id = ?').all(connectionId);
   const { aspsp_name: aspspName } = db.prepare('SELECT aspsp_name FROM bank_connections WHERE id = ?').get(connectionId);
   const carry = db.prepare('UPDATE bank_accounts SET active = ?, last_sync = ? WHERE id = ?');
+  const olderInBank = db.prepare(
+    `SELECT a.* FROM bank_accounts a JOIN bank_connections c ON c.id = a.connection_id
+     WHERE a.connection_id != ? AND c.aspsp_name = ? ORDER BY a.id DESC`
+  );
   const older = new Set();
+  const replaced = new Set();
   for (const acc of fresh) {
-    const prev = db
-      .prepare(
-        `SELECT a.* FROM bank_accounts a JOIN bank_connections c ON c.id = a.connection_id
-         WHERE a.connection_id != ?
-           AND (a.uid = ? OR (? IS NOT NULL AND a.iban = ? AND c.aspsp_name = ?))
-         ORDER BY a.id DESC`
-      )
-      .get(connectionId, acc.uid, acc.iban, acc.iban, aspspName);
+    const candidates = olderInBank.all(connectionId, aspspName);
+    let prev =
+      db
+        .prepare('SELECT * FROM bank_accounts WHERE uid = ? AND connection_id != ? ORDER BY id DESC')
+        .get(acc.uid, connectionId) ||
+      (acc.identification_hash && candidates.find((c) => c.identification_hash === acc.identification_hash)) ||
+      (acc.iban && candidates.find((c) => c.iban === acc.iban));
+    if (!prev && !acc.iban) {
+      const sameName = candidates.filter((c) => !c.iban && c.name === acc.name);
+      if (sameName.length === 1) prev = sameName[0];
+    }
     if (!prev) continue;
     carry.run(prev.active, prev.last_sync, acc.id);
+    if (!acc.identification_hash && prev.identification_hash) {
+      db.prepare('UPDATE bank_accounts SET identification_hash = ? WHERE id = ?').run(prev.identification_hash, acc.id);
+    }
     older.add(prev.connection_id);
+    replaced.add(prev.id);
   }
   for (const id of older) {
     const leftover = db
-      .prepare(
-        `SELECT COUNT(*) AS n FROM bank_accounts
-         WHERE connection_id = ? AND uid NOT IN (SELECT uid FROM bank_accounts WHERE connection_id = ?)`
-      )
-      .get(id, connectionId).n;
-    if (leftover === 0) db.prepare('DELETE FROM bank_connections WHERE id = ?').run(id);
+      .prepare('SELECT id FROM bank_accounts WHERE connection_id = ?')
+      .all(id)
+      .some((a) => !replaced.has(a.id));
+    if (!leftover) db.prepare('DELETE FROM bank_connections WHERE id = ?').run(id);
   }
 }
 
