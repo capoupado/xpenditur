@@ -6,6 +6,7 @@ import { api } from '../lib/api.js';
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', end: true },
+  { to: '/insights', label: 'Insights' },
   { to: '/transactions', label: 'Transactions' },
   { to: '/categories', label: 'Categories' },
   { to: '/budgets', label: 'Budgets' },
@@ -83,7 +84,7 @@ export default function Layout({ children }) {
         })
         .catch(() => {});
     loadCount();
-    // Refresh periodically so the badge tracks background polling.
+    // Refresh periodically so the badge tracks the daily bank sync.
     const t = setInterval(loadCount, 60000);
     return () => {
       cancelled = true;

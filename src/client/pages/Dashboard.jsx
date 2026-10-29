@@ -101,6 +101,7 @@ export default function Dashboard() {
   const [budgetStatus, setBudgetStatus] = useState(null);
   const [upcoming, setUpcoming] = useState(null);
   const [recent, setRecent] = useState(null);
+  const [forecast, setForecast] = useState(null);
   const [loading, setLoading] = useState(true);
 
   // Upcoming recurring transactions in the next 7 days — template-based (reads
@@ -110,6 +111,11 @@ export default function Dashboard() {
       .get('/recurring/upcoming?days=7')
       .then((res) => setUpcoming(res.upcoming))
       .catch((err) => toast.error(err.message));
+    // Month-end projection — always the current month, shown only there.
+    api
+      .get('/insights/forecast')
+      .then(setForecast)
+      .catch(() => {});
   }, []);
 
   // First load: ask the server what "this month" is (TZ-aware), then use it
@@ -234,6 +240,27 @@ export default function Dashboard() {
                     {derived.daysLeft > 0 ? `${derived.daysLeft} days to close the month` : 'Last day of the month'}
                   </div>
                 </div>
+              )}
+              {derived?.isCurrent && forecast && (
+                <Link to="/insights" className="group min-w-0 flex-1 basis-[200px] px-[18px] py-3.5">
+                  <div className="flex justify-between xp-eyebrow-dim">
+                    <span>Projected month-end</span>
+                    <span className="transition-colors group-hover:text-cream">Details →</span>
+                  </div>
+                  <div
+                    className={`xp-num mt-1.5 text-xl font-extrabold tracking-tight ${
+                      forecast.totals.projectedNet < 0 ? 'text-brick-light' : 'text-lime'
+                    }`}
+                  >
+                    {forecast.totals.projectedNet < 0 ? '−' : '+'}
+                    {formatCents(Math.abs(forecast.totals.projectedNet))}
+                  </div>
+                  <div className="xp-num mt-0.5 text-xs font-medium text-cream-dim">
+                    {formatCents(forecast.totals.projectedSpending)} spent by the end
+                    {forecast.categories.some((c) => c.projectedOverBudget > 0) &&
+                      ` · ${forecast.categories.filter((c) => c.projectedOverBudget > 0).length} over budget`}
+                  </div>
+                </Link>
               )}
             </div>
           )}

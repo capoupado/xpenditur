@@ -71,6 +71,13 @@ export const SETTINGS_REGISTRY = {
     encrypt: false,
     default: '1',
   },
+  unusual_spending_alerts: {
+    validate: (v) => v === '0' || v === '1',
+    validateMessage: 'must be 0 or 1',
+    mask: false,
+    encrypt: false,
+    default: '1',
+  },
   // ---- AI provider (see services/ai-providers.js) ----
   // The active provider is chosen here; each provider keeps its own key and
   // model (generated ai_key_<id> / ai_model_<id> entries below), so switching

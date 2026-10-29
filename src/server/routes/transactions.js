@@ -2,7 +2,7 @@ import express from 'express';
 import db from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { isValidDateString, isFutureDate } from '../utils/dates.js';
-import { withBudgetAlertCheck } from '../services/notifications.js';
+import { withBudgetAlertCheck, checkUnusualSpending } from '../services/notifications.js';
 
 const router = express.Router();
 router.use(requireAuth);
@@ -117,6 +117,7 @@ router.post('/', (req, res) => {
   );
 
   const transaction = db.prepare('SELECT * FROM transactions WHERE id = ?').get(info.lastInsertRowid);
+  checkUnusualSpending(transaction);
   res.status(201).json(transaction);
 });
 

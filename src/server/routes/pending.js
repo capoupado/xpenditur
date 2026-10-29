@@ -19,7 +19,7 @@ import express from 'express';
 import db from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { isValidDateString, isFutureDate } from '../utils/dates.js';
-import { checkBudgetAlertForTransaction } from '../services/notifications.js';
+import { checkBudgetAlertForTransaction, checkUnusualSpending } from '../services/notifications.js';
 import { getAiConfig, callAiChat } from '../services/ai-client.js';
 import { buildCategoryHistory } from '../services/category-history.js';
 import {
@@ -80,6 +80,7 @@ function commitApproval(pendingId, fields) {
   } catch (err) {
     console.error('[pending] budget alert check failed (non-fatal):', err.message);
   }
+  checkUnusualSpending(transaction);
   return transaction;
 }
 

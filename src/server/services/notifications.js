@@ -13,6 +13,7 @@
 import db from '../db.js';
 import { getSetting, getSettingNumber } from './settings-store.js';
 import { getEffectiveBudget, getCategorySpend } from './budget-lookup.js';
+import { unusualSpendingFor, hotCategories } from './insights.js';
 import * as __dates from '../utils/dates.js';
 
 const { currentLocalMonth } = __dates;
@@ -95,7 +96,7 @@ function recurringReminderEmbed(transaction) {
   };
 }
 
-function weeklySummaryEmbed({ totalSpent, topCategories, budgetStatuses, from, to }) {
+function weeklySummaryEmbed({ totalSpent, topCategories, budgetStatuses, hot, from, to }) {
   return {
     title: '📅 Weekly summary',
     description: `Spending from ${from} to ${to}`,
@@ -122,6 +123,17 @@ function weeklySummaryEmbed({ totalSpent, topCategories, budgetStatuses, from, t
                 .join('\n'),
         inline: false,
       },
+      ...(hot.length > 0
+        ? [
+            {
+              name: 'Running hot',
+              value: hot
+                .map((h) => `${h.icon || ''} ${h.name} — ${centsToEuro(h.week)}, ${h.ratio.toFixed(1)}× a usual week (${centsToEuro(h.usual)})`.trim())
+                .join('\n'),
+              inline: false,
+            },
+          ]
+        : []),
     ],
     footer: nowFooter(),
   };
@@ -149,6 +161,18 @@ function monthlySummaryEmbed({ month, earnings, spending, net, budgetPerformance
         inline: false,
       },
     ],
+    footer: nowFooter(),
+  };
+}
+
+function unusualSpendingEmbed(transaction, category, { baseline, ratio, basis }) {
+  return {
+    title: `🔎 Unusual spending — ${category?.icon || ''} ${category?.name || ''}`.trim(),
+    description:
+      `**${centsToEuro(transaction.amount)}**${transaction.description ? ` — ${transaction.description}` : ''} on ${transaction.date}.\n` +
+      `That's ${ratio.toFixed(1)}× the usual ${centsToEuro(baseline)} ` +
+      (basis === 'description' ? 'for this payee.' : 'for this category.'),
+    color: COLOR_ORANGE,
     footer: nowFooter(),
   };
 }
@@ -203,7 +227,14 @@ function computeWeeklySummaryData() {
   const month = currentLocalMonth();
   const budgetStatuses = currentMonthBudgetStatuses(month);
 
-  return { totalSpent, topCategories, budgetStatuses, from, to: today };
+  let hot = [];
+  try {
+    hot = hotCategories({ today });
+  } catch (err) {
+    console.error('[notifications] hot-category check failed (non-fatal):', err.message);
+  }
+
+  return { totalSpent, topCategories, budgetStatuses, hot, from, to: today };
 }
 
 function currentMonthBudgetStatuses(month) {
@@ -361,6 +392,29 @@ export function checkBudgetAlertForTransaction(transaction) {
   }
 }
 
+// Unusual-spending alert for a freshly created spending (manual entry or
+// pending approval). Recurring materialisations are expected by definition,
+// and anything dated more than a week back (e.g. approving an imported
+// statement) is old news, so both are skipped. Never throws.
+const UNUSUAL_ALERT_MAX_AGE_DAYS = 7;
+
+export function checkUnusualSpending(transaction) {
+  try {
+    if (!transaction || transaction.type !== 'spending' || transaction.recurring_id != null) return;
+    if (getSetting('unusual_spending_alerts') !== '1') return;
+    if (transaction.date < __dates.addDays(__dates.todayLocalDate(), -UNUSUAL_ALERT_MAX_AGE_DAYS)) return;
+    const unusual = unusualSpendingFor(transaction);
+    if (!unusual) return;
+    const category = db.prepare('SELECT name, icon FROM categories WHERE id = ?').get(transaction.category_id);
+    fireAndForget(
+      () => postToDiscord({ embeds: [unusualSpendingEmbed(transaction, category, unusual)] }),
+      'checkUnusualSpending'
+    );
+  } catch (err) {
+    console.error('[notifications] unusual-spending check failed (non-fatal):', err.message);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Phase 4 → Phase 5 seam
 // ---------------------------------------------------------------------------
@@ -384,5 +438,6 @@ export default {
   sendTestNotification,
   withBudgetAlertCheck,
   checkBudgetAlertForTransaction,
+  checkUnusualSpending,
   onRecurringMaterialised,
 };

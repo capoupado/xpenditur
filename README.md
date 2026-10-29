@@ -7,8 +7,9 @@
 - **Transactions & Categories** — strict domain rules: category type must match transaction type, dates locked to today or earlier, mandatory categorization
 - **Monthly Budgets** — spending limits per category with month-specific overrides; color-coded progress bars (green/yellow/orange/red)
 - **Charts Dashboard** — spending by category, earnings vs. spending trends (last 6 months), daily breakdown, category tables
+- **Insights** — month-end forecast (recorded + scheduled + usual variable spending, per category vs budget); regular-payment radar (detected subscriptions/bills with cadence, yearly cost, price changes, stopped charges and missing recurring templates); "Ask your ledger" natural-language questions answered by the AI provider over a read-only, ledger-only copy of the data
 - **Recurring Transactions** — daily/weekly/monthly/yearly with backfill on downtime (no missed occurrences)
-- **Discord Notifications** — threshold-crossing budget alerts (80% and 100%), weekly summaries (Monday), monthly recaps (1st of month)
+- **Discord Notifications** — threshold-crossing budget alerts (80% and 100%), unusual-spending alerts (a new spending several times the payee's or category's usual), weekly summaries (Monday, with categories running hot), monthly recaps (1st of month)
 - **Review Queue (Pending)** — bank-synced and imported rows wait for approval; categories are suggested from your own ledger history first, then by the AI provider (OpenCode, OpenAI, Anthropic, Gemini, DeepSeek, Mistral, Groq, xAI, OpenRouter, or any OpenAI-compatible server); non-EUR rows need the real EUR amount at approval
 - **Bank Statement Import** — upload CSV (parsed deterministically; CGD/Novo Banco export conventions supported) or PDF (parsed via the AI provider) statements into the review queue
 - **Bank Sync (Enable Banking)** — pull transactions directly from your banks via the Enable Banking PSD2 aggregator; daily + on-demand sync into the review queue; the app serves its own `/privacy` and `/terms` pages required for an Enable Banking production application

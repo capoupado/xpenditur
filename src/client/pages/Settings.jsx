@@ -616,6 +616,7 @@ export default function Settings() {
   const [webhookMasked, setWebhookMasked] = useState('');
   const [threshold, setThreshold] = useState('80');
   const [weeklyDay, setWeeklyDay] = useState('1');
+  const [unusualAlerts, setUnusualAlerts] = useState(true);
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -630,6 +631,7 @@ export default function Settings() {
         setWebhookMasked(data.discord_webhook_url || '');
         setThreshold(String(data.notification_budget_threshold ?? '80'));
         setWeeklyDay(String(data.weekly_summary_day ?? '1'));
+        setUnusualAlerts(String(data.unusual_spending_alerts ?? '1') === '1');
       })
       .catch((err) => toast.error(err.message))
       .finally(() => setLoading(false));
@@ -646,6 +648,7 @@ export default function Settings() {
       const payload = {
         notification_budget_threshold: threshold,
         weekly_summary_day: weeklyDay,
+        unusual_spending_alerts: unusualAlerts ? '1' : '0',
       };
       // Only send the webhook URL if the user actually typed a new one —
       // otherwise we'd overwrite the stored value with its own masked preview.
@@ -783,6 +786,21 @@ export default function Settings() {
               </select>
             </div>
           </div>
+
+          <label className="flex items-start gap-2.5 text-sm text-gray-300">
+            <input
+              type="checkbox"
+              checked={unusualAlerts}
+              onChange={(e) => setUnusualAlerts(e.target.checked)}
+              className="mt-0.5 accent-emerald-500"
+            />
+            <span>
+              Unusual spending alerts
+              <span className="block text-xs text-gray-500">
+                Ping when a new spending is several times what you usually pay that payee or in that category.
+              </span>
+            </span>
+          </label>
 
           <div className="flex flex-wrap gap-2 justify-end pt-2">
             <button

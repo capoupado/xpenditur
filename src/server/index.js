@@ -18,6 +18,7 @@ import pendingRoutes from './routes/pending.js';
 import settingsRoutes from './routes/settings.js';
 import importRoutes from './routes/import.js';
 import bankRoutes from './routes/bank.js';
+import insightsRoutes from './routes/insights.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -59,6 +60,7 @@ app.use('/api/pending', pendingRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/import', importRoutes);
 app.use('/api/bank', bankRoutes);
+app.use('/api/insights', insightsRoutes);
 
 // Public, unauthenticated Privacy Policy and Terms of Service pages — Enable
 // Banking requires (and verifies) reachable privacy/terms URLs on a production
