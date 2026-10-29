@@ -3,14 +3,19 @@
 //     downtime is backfilled the moment the server comes back up).
 //   - Phase 5: weekly + monthly Discord summary notifications.
 //   - Daily Enable Banking sync into the Pending queue.
+//   - Daily bank-consent expiry warnings.
 
 import cron from 'node-cron';
 import { processDueRecurring } from './services/recurring.js';
-import { sendWeeklySummary, sendMonthlySummary } from './services/notifications.js';
+import { sendWeeklySummary, sendMonthlySummary, sendBankExpiryWarning } from './services/notifications.js';
 import { getSettingNumber } from './services/settings-store.js';
-import { syncBankAccounts } from './services/enablebanking.js';
+import { syncBankAccounts, connectionExpiries } from './services/enablebanking.js';
 
 const TZ = process.env.TZ || 'Europe/Lisbon';
+
+// Days-before-expiry on which a bank consent warning goes out (0 = the day it
+// expires). Fixed days rather than daily nagging; the app banner covers the rest.
+const BANK_EXPIRY_NOTICE_DAYS = new Set([14, 7, 3, 1, 0]);
 
 function runRecurring(context) {
   try {
@@ -54,6 +59,21 @@ export function registerCronJobs() {
   // month that just ended (sendMonthlySummary computes "previous month"
   // relative to whenever it's called).
   cron.schedule('0 9 1 * *', () => sendMonthlySummary(), { timezone: TZ });
+
+  // Bank consent expiry — 09:00 daily, warns on the BANK_EXPIRY_NOTICE_DAYS.
+  cron.schedule(
+    '0 9 * * *',
+    () => {
+      try {
+        for (const conn of connectionExpiries()) {
+          if (BANK_EXPIRY_NOTICE_DAYS.has(conn.days_left)) sendBankExpiryWarning(conn);
+        }
+      } catch (err) {
+        console.error('[cron] bank expiry check failed:', err.message);
+      }
+    },
+    { timezone: TZ }
+  );
 
   // Bank transaction sync (Enable Banking) — once a day at 07:30. Banks
   // typically book transactions overnight, and each sync only fetches the

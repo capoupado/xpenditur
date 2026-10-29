@@ -23,7 +23,7 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import db from '../db.js';
 import { getSetting } from './settings-store.js';
-import { todayLocalDate, addDays, isValidDateString } from '../utils/dates.js';
+import { todayLocalDate, addDays, daysBetween, isValidDateString } from '../utils/dates.js';
 import { isProcessed, recordProcessed } from './import-dedup.js';
 import { toCents } from './ai-response.js';
 import { otherCategoryId } from './statement-import.js';
@@ -35,6 +35,9 @@ const MAX_CONSENT_SECONDS = 90 * 86400; // PSD2 SCA ceiling — banks may cap lo
 const FIRST_SYNC_LOOKBACK_DAYS = 89; // banks rarely serve >90 days without SCA
 const RESYNC_OVERLAP_DAYS = 3;
 const AUTH_REQUEST_TTL_MS = 24 * 60 * 60 * 1000;
+// Consents expiring within this many days are surfaced in the app banner.
+export const EXPIRY_WARNING_DAYS = 14;
+const TZ = process.env.TZ || 'Europe/Lisbon';
 
 function baseUrl() {
   return (process.env.ENABLEBANKING_BASE_URL || 'https://api.enablebanking.com').replace(/\/+$/, '');
@@ -199,10 +202,59 @@ export async function completeBankAuth({ code, state }) {
         acc.currency || null
       );
     }
+    supersedeOlderConnections(connectionId);
     return connectionId;
   });
   const connectionId = run();
   return { connectionId, accounts: accounts.length, returnUrl: reqRow.return_url || null };
+}
+
+// A reconnect (renewing an expiring consent) yields a new session with the
+// same account uids. The older connections covering those accounts are
+// dropped, and each account keeps its sync window and paused/active state.
+export function supersedeOlderConnections(connectionId) {
+  const fresh = db.prepare('SELECT * FROM bank_accounts WHERE connection_id = ?').all(connectionId);
+  const carry = db.prepare('UPDATE bank_accounts SET active = ?, last_sync = ? WHERE id = ?');
+  const older = new Set();
+  for (const acc of fresh) {
+    const prev = db
+      .prepare('SELECT * FROM bank_accounts WHERE uid = ? AND connection_id != ? ORDER BY id DESC')
+      .get(acc.uid, connectionId);
+    if (!prev) continue;
+    carry.run(prev.active, prev.last_sync, acc.id);
+    older.add(prev.connection_id);
+  }
+  for (const id of older) {
+    const leftover = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM bank_accounts
+         WHERE connection_id = ? AND uid NOT IN (SELECT uid FROM bank_accounts WHERE connection_id = ?)`
+      )
+      .get(id, connectionId).n;
+    if (leftover === 0) db.prepare('DELETE FROM bank_connections WHERE id = ?').run(id);
+  }
+}
+
+// Calendar date (app timezone) on which a consent stops working.
+function expiryLocalDate(validUntil) {
+  const d = new Date(validUntil);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+}
+
+/**
+ * Every connection with a known consent end, plus `days_left` (0 = expires
+ * today, negative = already expired).
+ */
+export function connectionExpiries({ today = todayLocalDate() } = {}) {
+  return db
+    .prepare('SELECT id, aspsp_name, aspsp_country, valid_until FROM bank_connections WHERE valid_until IS NOT NULL')
+    .all()
+    .map((c) => {
+      const expires = expiryLocalDate(c.valid_until);
+      return expires ? { ...c, expires_on: expires, days_left: daysBetween(today, expires) } : null;
+    })
+    .filter(Boolean);
 }
 
 // ---------------------------------------------------------------------------
@@ -212,7 +264,13 @@ export async function completeBankAuth({ code, state }) {
 export function listConnections() {
   const connections = db.prepare('SELECT * FROM bank_connections ORDER BY id ASC').all();
   const accStmt = db.prepare('SELECT * FROM bank_accounts WHERE connection_id = ? ORDER BY id ASC');
-  return connections.map((c) => ({ ...c, accounts: accStmt.all(c.id) }));
+  const expiries = new Map(connectionExpiries().map((e) => [e.id, e]));
+  return connections.map((c) => ({
+    ...c,
+    expires_on: expiries.get(c.id)?.expires_on ?? null,
+    days_left: expiries.get(c.id)?.days_left ?? null,
+    accounts: accStmt.all(c.id),
+  }));
 }
 
 export function deleteConnection(id) {
@@ -386,6 +444,7 @@ export default {
   startBankAuth,
   completeBankAuth,
   listConnections,
+  connectionExpiries,
   deleteConnection,
   setAccountActive,
   normalizeTransaction,

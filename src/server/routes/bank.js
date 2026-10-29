@@ -15,6 +15,8 @@ import {
   startBankAuth,
   completeBankAuth,
   listConnections,
+  connectionExpiries,
+  EXPIRY_WARNING_DAYS,
   deleteConnection,
   setAccountActive,
   syncBankAccounts,
@@ -105,6 +107,12 @@ router.post('/connect', async (req, res) => {
   } catch (err) {
     res.status(err.status || 502).json({ error: err.message });
   }
+});
+
+// GET /api/bank/expiry — connections whose consent has expired or will
+// within EXPIRY_WARNING_DAYS (drives the app-wide banner).
+router.get('/expiry', (req, res) => {
+  res.json(connectionExpiries().filter((c) => c.days_left <= EXPIRY_WARNING_DAYS));
 });
 
 // GET /api/bank/connections — connections with their accounts.

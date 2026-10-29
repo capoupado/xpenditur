@@ -177,6 +177,21 @@ function unusualSpendingEmbed(transaction, category, { baseline, ratio, basis })
   };
 }
 
+function bankExpiryEmbed(conn) {
+  const when =
+    conn.days_left < 0
+      ? `expired on ${conn.expires_on}`
+      : conn.days_left === 0
+        ? 'expires **today**'
+        : `expires in **${conn.days_left} day${conn.days_left === 1 ? '' : 's'}** (${conn.expires_on})`;
+  return {
+    title: `⏳ Bank consent ${conn.days_left <= 0 ? 'expired' : 'expiring'} — ${conn.aspsp_name}`,
+    description: `The ${conn.aspsp_name} (${conn.aspsp_country}) connection ${when}. Reconnect it in Settings → Bank sync to keep transactions flowing.`,
+    color: conn.days_left <= 3 ? COLOR_RED : COLOR_ORANGE,
+    footer: nowFooter(),
+  };
+}
+
 function testEmbed() {
   return {
     title: '✅ xPenditur test notification',
@@ -202,6 +217,10 @@ export function sendBudgetAlert(category, spent, limit, percentage, thresholdPct
 
 export function sendRecurringReminder(transaction) {
   fireAndForget(() => postToDiscord({ embeds: [recurringReminderEmbed(transaction)] }), 'sendRecurringReminder');
+}
+
+export function sendBankExpiryWarning(conn) {
+  fireAndForget(() => postToDiscord({ embeds: [bankExpiryEmbed(conn)] }), 'sendBankExpiryWarning');
 }
 
 function computeWeeklySummaryData() {
@@ -433,6 +452,7 @@ export function onRecurringMaterialised(transaction) {
 export default {
   sendBudgetAlert,
   sendRecurringReminder,
+  sendBankExpiryWarning,
   sendWeeklySummary,
   sendMonthlySummary,
   sendTestNotification,

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { api } from '../lib/api.js';
+import { expiryText, reconnectBank } from '../components/BankExpiryBanner.jsx';
 
 const WEEKDAY_OPTIONS = [
   { value: 0, label: 'Sunday' },
@@ -482,11 +483,20 @@ function BankSyncSection() {
                     <p className="text-sm font-medium text-gray-200">
                       {conn.aspsp_name} <span className="text-gray-500">({conn.aspsp_country})</span>
                     </p>
-                    <p className="text-xs text-gray-500">
-                      Consent valid until {conn.valid_until ? conn.valid_until.slice(0, 10) : 'unknown'} — reconnect
-                      after it expires.
+                    <p
+                      className={`text-xs ${
+                        conn.days_left == null ? 'text-gray-500' : conn.days_left <= 3 ? 'text-red-400' : conn.days_left <= 14 ? 'text-amber-400' : 'text-gray-500'
+                      }`}
+                    >
+                      {conn.days_left == null ? 'Consent expiry unknown' : `Consent ${expiryText(conn)}`}
                     </p>
                   </div>
+                  <button
+                    onClick={() => reconnectBank(conn).catch((err) => toast.error(err.message))}
+                    className="text-gray-300 hover:text-white text-sm shrink-0"
+                  >
+                    Reconnect
+                  </button>
                   <button
                     onClick={() => setDeleteTarget(conn)}
                     className="text-red-400 hover:text-red-300 text-sm shrink-0"

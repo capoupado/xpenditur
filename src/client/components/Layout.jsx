@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useAuth } from '../lib/AuthContext.jsx';
 import { api } from '../lib/api.js';
+import BankExpiryBanner from './BankExpiryBanner.jsx';
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', end: true },
@@ -154,6 +155,7 @@ export default function Layout({ children }) {
         </nav>
 
         <main className="flex min-w-0 flex-1 flex-col gap-3.5 px-4 pb-10 pt-6 sm:px-[clamp(16px,3vw,30px)]">
+          <BankExpiryBanner />
           {children}
         </main>
       </div>
