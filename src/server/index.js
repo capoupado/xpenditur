@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 
 import { initDb } from './db.js';
 import { registerCronJobs } from './cron.js';
-import { checkEncryptedSettingsDecryptable, migrateLegacyDeepseekSetting, migrateRemovedOpencodeGo } from './services/settings-store.js';
+import { checkEncryptedSettingsDecryptable, migrateLegacyDeepseekSetting } from './services/settings-store.js';
 import { migrateLegacyImapSettings } from './services/imap-accounts.js';
 
 import authRoutes from './routes/auth.js';
@@ -36,7 +36,6 @@ migrateLegacyImapSettings();
 
 // One-time move of the legacy deepseek_api_key into the AI provider settings.
 migrateLegacyDeepseekSetting();
-migrateRemovedOpencodeGo();
 
 // Surface a clear message (not an opaque crypto error) if ENCRYPTION_KEY
 // changed and stored IMAP/AI provider secrets can no longer be decrypted.

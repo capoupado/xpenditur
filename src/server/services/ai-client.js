@@ -7,8 +7,13 @@
 // settings-store.js → ai_provider / ai_model_<id> / ai_key_<id>), so switching
 // provider keeps each provider's key and model for switching back.
 
+import crypto from 'crypto';
 import { getSetting } from './settings-store.js';
 import { getProvider } from './ai-providers.js';
+
+// Identify ourselves honestly (OpenCode Go asks clients not to send a generic
+// HTTP-library user agent).
+const USER_AGENT = 'xpenditur/1.0';
 
 const REQUEST_TIMEOUT_MS = 180_000; // PDF statements can take a while
 const MODELS_TIMEOUT_MS = 20_000;
@@ -44,11 +49,16 @@ export function getAiConfig() {
   const model = getSetting(`ai_model_${provider.id}`) || '';
   const baseUrl = trimSlash(provider.id === 'custom' ? getSetting('ai_custom_base_url') : provider.baseUrl);
   if (!model || !baseUrl || (!apiKey && !provider.keyOptional)) return null;
-  return { provider, apiKey, model, baseUrl, label: provider.label };
+  // Each caller resolves the config once per unit of work (one email, one PDF
+  // import, one categorize request), so a fresh id here is a natural
+  // per-conversation session for providers that want one (OpenCode Go).
+  return { provider, apiKey, model, baseUrl, label: provider.label, sessionId: crypto.randomUUID() };
 }
 
-function headersFor(provider, apiKey, protocol) {
-  const headers = { 'Content-Type': 'application/json' };
+function headersFor(cfg, protocol) {
+  const { provider, apiKey } = cfg;
+  const headers = { 'Content-Type': 'application/json', 'User-Agent': USER_AGENT };
+  if (provider.sessionHeader) headers['x-opencode-session'] = cfg.sessionId;
   if (!apiKey) return headers;
   if (protocol === 'messages') {
     headers['x-api-key'] = apiKey;
@@ -97,7 +107,7 @@ async function callChatCompletions(cfg, systemPrompt, userContent, { strict = tr
     body.response_format = { type: 'json_object' };
   }
   try {
-    const json = await postJson(`${cfg.baseUrl}/chat/completions`, headersFor(cfg.provider, cfg.apiKey, 'chat'), body, cfg.label);
+    const json = await postJson(`${cfg.baseUrl}/chat/completions`, headersFor(cfg, 'chat'), body, cfg.label);
     return json?.choices?.[0]?.message?.content;
   } catch (err) {
     // Reasoning models reject temperature, and not every model supports JSON
@@ -113,7 +123,7 @@ async function callChatCompletions(cfg, systemPrompt, userContent, { strict = tr
 async function callMessages(cfg, systemPrompt, userContent) {
   const json = await postJson(
     `${cfg.baseUrl}/messages`,
-    headersFor(cfg.provider, cfg.apiKey, 'messages'),
+    headersFor(cfg, 'messages'),
     {
       model: cfg.model,
       max_tokens: MAX_OUTPUT_TOKENS,
@@ -129,7 +139,7 @@ async function callMessages(cfg, systemPrompt, userContent) {
 async function callResponses(cfg, systemPrompt, userContent) {
   const json = await postJson(
     `${cfg.baseUrl}/responses`,
-    headersFor(cfg.provider, cfg.apiKey, 'responses'),
+    headersFor(cfg, 'responses'),
     { model: cfg.model, instructions: systemPrompt, input: userContent },
     cfg.label
   );
@@ -200,7 +210,8 @@ export async function listModels(providerId, { apiKey, baseUrl } = {}) {
   const base = trimSlash(baseUrl || (provider.id === 'custom' ? getSetting('ai_custom_base_url') : provider.baseUrl));
   if (!base) throw aiError('Set a base URL first', 400);
 
-  const headers = {};
+  const headers = { 'User-Agent': USER_AGENT };
+  if (provider.sessionHeader) headers['x-opencode-session'] = crypto.randomUUID();
   if (key) {
     if (provider.protocol === 'messages') {
       headers['x-api-key'] = key;

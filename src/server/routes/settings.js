@@ -55,10 +55,11 @@ router.post('/test-discord', async (req, res) => {
 // page (labels, key links, which ones need a base URL / key).
 router.get('/ai-providers', (req, res) => {
   res.json(
-    AI_PROVIDERS.map(({ id, label, keyUrl, keyOptional }) => ({
+    AI_PROVIDERS.map(({ id, label, keyUrl, keyOptional, note }) => ({
       id,
       label,
       keyUrl: keyUrl || null,
+      note: note || null,
       keyOptional: !!keyOptional,
       needsBaseUrl: id === 'custom',
     }))

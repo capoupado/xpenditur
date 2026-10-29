@@ -13,9 +13,19 @@
 
 export const AI_PROVIDERS = [
   { id: 'opencode', label: 'OpenCode Zen', baseUrl: 'https://opencode.ai/zen/v1', protocol: 'auto', keyUrl: 'https://opencode.ai/auth' },
-  // OpenCode Go is deliberately absent: it only accepts coding-agent traffic
-  // (requires an x-opencode-session header and is abuse-monitored). The same
-  // OpenCode key works on Zen, which is pay-per-use and allows any traffic.
+  // OpenCode Go rejects requests without an x-opencode-session header; we send
+  // one per extraction/import/categorize run, plus our own User-Agent, as its
+  // docs ask of third-party clients. Go is meant for coding agents and is
+  // abuse-monitored, hence the note shown in Settings.
+  {
+    id: 'opencode-go',
+    label: 'OpenCode Go',
+    baseUrl: 'https://opencode.ai/zen/go/v1',
+    protocol: 'auto',
+    sessionHeader: true,
+    keyUrl: 'https://opencode.ai/auth',
+    note: 'OpenCode Go is a subscription intended for coding agents and its traffic is monitored for abuse. Light use here is at your own discretion; OpenCode Zen (pay-per-use) has no such restriction.',
+  },
   { id: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', protocol: 'chat', keyUrl: 'https://platform.openai.com/api-keys' },
   { id: 'anthropic', label: 'Anthropic', baseUrl: 'https://api.anthropic.com/v1', protocol: 'messages', keyUrl: 'https://console.anthropic.com/settings/keys' },
   { id: 'gemini', label: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', protocol: 'chat', keyUrl: 'https://aistudio.google.com/apikey' },

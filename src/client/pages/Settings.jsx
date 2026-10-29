@@ -253,6 +253,8 @@ function AiProviderSection() {
           )}
         </div>
 
+        {provider?.note && <p className="text-xs text-amber-400">{provider.note}</p>}
+
         {provider?.needsBaseUrl && (
           <div>
             <label className="block text-xs text-gray-500 mb-1">Base URL</label>
