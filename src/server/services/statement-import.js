@@ -307,14 +307,14 @@ async function parsePdfStatement(buffer) {
   try {
     content = await callAiChat(ai, { systemPrompt: PDF_SYSTEM_PROMPT, userContent: text });
   } catch (err) {
-    throw importError(`${ai.label} call failed: ${err.message}`, 502);
+    throw importError(`${ai.label} call failed: ${err.message}`);
   }
 
   let extracted;
   try {
     extracted = parseExtractionResponse(content);
   } catch {
-    throw importError(`${ai.label} returned an unparseable response for this PDF.`, 502);
+    throw importError(`${ai.label} returned an unparseable response for this PDF.`);
   }
 
   const list = Array.isArray(extracted?.transactions) ? extracted.transactions : [];

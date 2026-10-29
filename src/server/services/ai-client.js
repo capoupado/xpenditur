@@ -62,12 +62,19 @@ function headersFor(provider, apiKey, protocol) {
 }
 
 async function postJson(url, headers, body, label) {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (err) {
+    const netErr = aiError(`Could not reach ${label}: ${err.cause?.message || err.message}`);
+    netErr.network = true;
+    throw netErr;
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw aiError(`${label} responded ${res.status}${text ? `: ${text.slice(0, 300)}` : ''}`, res.status);
@@ -147,8 +154,9 @@ function protocolOrder(model) {
   return [first, ...['chat', 'messages', 'responses'].filter((p) => p !== first)];
 }
 
-// Auth/rate-limit/server errors won't be fixed by switching format.
+// Network/auth/rate-limit/server errors won't be fixed by switching format.
 function isFormatMismatch(err) {
+  if (err.network) return false;
   return !err.status || [400, 404, 405, 415, 422].includes(err.status);
 }
 
@@ -207,11 +215,11 @@ export async function listModels(providerId, { apiKey, baseUrl } = {}) {
   try {
     res = await fetch(url, { headers, signal: AbortSignal.timeout(MODELS_TIMEOUT_MS) });
   } catch (err) {
-    throw aiError(`Could not reach ${provider.label}: ${err.message}`, 502);
+    throw aiError(`Could not reach ${provider.label}: ${err.cause?.message || err.message}`, 400);
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw aiError(`${provider.label} responded ${res.status}${text ? `: ${text.slice(0, 200)}` : ''}`, 502);
+    throw aiError(`${provider.label} responded ${res.status}${text ? `: ${text.slice(0, 200)}` : ''}`, 400);
   }
   const json = await res.json().catch(() => null);
   const list = Array.isArray(json?.data) ? json.data : Array.isArray(json?.models) ? json.models : Array.isArray(json) ? json : [];

@@ -285,9 +285,33 @@ export function migrateLegacyDeepseekSetting() {
   if (legacy.value) console.log('[settings] Migrated DeepSeek API key to the AI provider settings.');
 }
 
+/**
+ * One-time startup migration: the OpenCode Go provider was removed (it only
+ * serves coding-agent traffic). Its key and model move to the OpenCode Zen
+ * slots if those are empty — same key works there. Zen is NOT made active
+ * automatically because it bills per request; the user opts in in Settings.
+ */
+export function migrateRemovedOpencodeGo() {
+  const rows = db
+    .prepare("SELECT key, value FROM settings WHERE key IN ('ai_key_opencode-go', 'ai_model_opencode-go')")
+    .all();
+  const active = db.prepare("SELECT value FROM settings WHERE key = 'ai_provider'").get();
+  if (rows.length === 0 && active?.value !== 'opencode-go') return;
+  const upsertIfMissing = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
+  db.transaction(() => {
+    for (const { key, value } of rows) {
+      if (value) upsertIfMissing.run(key.replace('opencode-go', 'opencode'), value);
+    }
+    db.prepare("DELETE FROM settings WHERE key IN ('ai_key_opencode-go', 'ai_model_opencode-go')").run();
+    if (active?.value === 'opencode-go') db.prepare("UPDATE settings SET value = '' WHERE key = 'ai_provider'").run();
+  })();
+  console.log('[settings] OpenCode Go is no longer supported — moved its key/model to OpenCode Zen (not activated).');
+}
+
 export default {
   SETTINGS_REGISTRY,
   migrateLegacyDeepseekSetting,
+  migrateRemovedOpencodeGo,
   getSetting,
   getSettingNumber,
   setSetting,

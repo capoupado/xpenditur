@@ -78,7 +78,9 @@ router.post('/ai-models', async (req, res) => {
     });
     res.json({ models });
   } catch (err) {
-    res.status(err.status || 502).json({ error: err.message });
+    // 4xx, not 502: reverse proxies/tunnels replace 5xx bodies with their own
+    // error page, which would hide the provider's actual error message.
+    res.status(err.status || 400).json({ error: err.message });
   }
 });
 
@@ -94,7 +96,7 @@ router.post('/ai-test', async (req, res) => {
     });
     res.json({ success: true, provider: cfg.label, model: cfg.model, reply: content.slice(0, 200) });
   } catch (err) {
-    res.status(502).json({ error: err.message });
+    res.status(400).json({ error: err.message });
   }
 });
 

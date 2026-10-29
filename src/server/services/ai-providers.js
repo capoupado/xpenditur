@@ -6,14 +6,16 @@
 // `protocol` is the wire format used for chat calls:
 //   'chat'     OpenAI-compatible POST {baseUrl}/chat/completions
 //   'messages' Anthropic Messages API POST {baseUrl}/messages
-//   'auto'     gateway serving models over different formats (OpenCode routes
+//   'auto'     gateway serving models over different formats (OpenCode Zen routes
 //              Claude models via /messages and GPT models via /responses);
 //              ai-client.js guesses from the model id and falls back.
 // Every provider lists models at GET {baseUrl}/models.
 
 export const AI_PROVIDERS = [
   { id: 'opencode', label: 'OpenCode Zen', baseUrl: 'https://opencode.ai/zen/v1', protocol: 'auto', keyUrl: 'https://opencode.ai/auth' },
-  { id: 'opencode-go', label: 'OpenCode Go', baseUrl: 'https://opencode.ai/zen/go/v1', protocol: 'auto', keyUrl: 'https://opencode.ai/auth' },
+  // OpenCode Go is deliberately absent: it only accepts coding-agent traffic
+  // (requires an x-opencode-session header and is abuse-monitored). The same
+  // OpenCode key works on Zen, which is pay-per-use and allows any traffic.
   { id: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', protocol: 'chat', keyUrl: 'https://platform.openai.com/api-keys' },
   { id: 'anthropic', label: 'Anthropic', baseUrl: 'https://api.anthropic.com/v1', protocol: 'messages', keyUrl: 'https://console.anthropic.com/settings/keys' },
   { id: 'gemini', label: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', protocol: 'chat', keyUrl: 'https://aistudio.google.com/apikey' },
